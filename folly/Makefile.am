@@ -58,6 +58,8 @@ nobase_follyinclude_HEADERS = \
 	detail/Malloc.h \
 	detail/MemoryIdler.h \
 	detail/MPMCPipelineDetail.h \
+	detail/RangeCommon.h \
+	detail/RangeSse42.h \
 	detail/Sleeper.h \
 	detail/SlowFingerprint.h \
 	detail/SpinLockImpl.h \
@@ -120,6 +122,7 @@ nobase_follyinclude_HEADERS = \
 	experimental/StringKeyedUnorderedSet.h \
 	experimental/TestUtil.h \
 	experimental/TupleOps.h \
+	SparseByteSet.h \
 	FBString.h \
 	FBVector.h \
 	File.h \
@@ -186,6 +189,7 @@ nobase_follyinclude_HEADERS = \
 	io/RecordIO-inl.h \
 	io/TypedIOBuf.h \
 	io/ShutdownSocketSet.h \
+	io/async/AsyncPipe.h \
 	io/async/AsyncTimeout.h \
 	io/async/AsyncTransport.h \
 	io/async/AsyncUDPServerSocket.h \
@@ -245,6 +249,7 @@ nobase_follyinclude_HEADERS = \
 	Random.h \
 	Random-inl.h \
 	Range.h \
+	ReadMostlySharedPtr.h \
 	RWSpinLock.h \
 	ScopeGuard.h \
 	SharedMutex.h \
@@ -300,11 +305,12 @@ CLEANFILES += GroupVarintTables.cpp
 libfollybase_la_SOURCES = \
 	Conv.cpp \
 	Demangle.cpp \
+	detail/RangeCommon.cpp \
+	detail/RangeSse42.cpp \
 	EscapeTables.cpp \
 	Format.cpp \
 	FormatTables.cpp \
 	Malloc.cpp \
-	Range.cpp \
 	StringBase.cpp \
 	String.cpp \
 	Unicode.cpp
@@ -336,6 +342,7 @@ libfolly_la_SOURCES = \
 	io/IOBufQueue.cpp \
 	io/RecordIO.cpp \
 	io/ShutdownSocketSet.cpp \
+	io/async/AsyncPipe.cpp \
 	io/async/AsyncTimeout.cpp \
 	io/async/AsyncUDPSocket.cpp \
 	io/async/AsyncServerSocket.cpp \

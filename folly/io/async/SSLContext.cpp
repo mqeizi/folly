@@ -415,46 +415,21 @@ int SSLContext::advertisedNextProtocolCallback(SSL* ssl,
 #if defined(SSL_MODE_HANDSHAKE_CUTTHROUGH) && \
   FOLLY_SSLCONTEXT_USE_TLS_FALSE_START
 SSLContext::SSLFalseStartChecker::SSLFalseStartChecker() :
-  /**
-   * The list was generated as follows:
-   * grep "_CK_" openssl-1.0.1e/ssl/s3_lib.c -A 4 |
-   * while read A && read B && read C && read D && read E && read F; do
-   * echo $A $B $C $D $E; done |
-   * grep "\(SSL_kDHr\|SSL_kDHd\|SSL_kEDH\|SSL_kECDHr\|
-   *         SSL_kECDHe\|SSL_kEECDH\)" | grep -v SSL_aNULL | grep SSL_AES |
-   * awk -F, '{ print $1"," }'
-   */
   ciphers_{
-    TLS1_CK_DH_DSS_WITH_AES_128_SHA,
-    TLS1_CK_DH_RSA_WITH_AES_128_SHA,
     TLS1_CK_DHE_DSS_WITH_AES_128_SHA,
     TLS1_CK_DHE_RSA_WITH_AES_128_SHA,
-    TLS1_CK_DH_DSS_WITH_AES_256_SHA,
-    TLS1_CK_DH_RSA_WITH_AES_256_SHA,
     TLS1_CK_DHE_DSS_WITH_AES_256_SHA,
     TLS1_CK_DHE_RSA_WITH_AES_256_SHA,
-    TLS1_CK_DH_DSS_WITH_AES_128_SHA256,
-    TLS1_CK_DH_RSA_WITH_AES_128_SHA256,
     TLS1_CK_DHE_DSS_WITH_AES_128_SHA256,
     TLS1_CK_DHE_RSA_WITH_AES_128_SHA256,
-    TLS1_CK_DH_DSS_WITH_AES_256_SHA256,
-    TLS1_CK_DH_RSA_WITH_AES_256_SHA256,
     TLS1_CK_DHE_DSS_WITH_AES_256_SHA256,
     TLS1_CK_DHE_RSA_WITH_AES_256_SHA256,
     TLS1_CK_DHE_RSA_WITH_AES_128_GCM_SHA256,
     TLS1_CK_DHE_RSA_WITH_AES_256_GCM_SHA384,
-    TLS1_CK_DH_RSA_WITH_AES_128_GCM_SHA256,
-    TLS1_CK_DH_RSA_WITH_AES_256_GCM_SHA384,
     TLS1_CK_DHE_DSS_WITH_AES_128_GCM_SHA256,
     TLS1_CK_DHE_DSS_WITH_AES_256_GCM_SHA384,
-    TLS1_CK_DH_DSS_WITH_AES_128_GCM_SHA256,
-    TLS1_CK_DH_DSS_WITH_AES_256_GCM_SHA384,
-    TLS1_CK_ECDH_ECDSA_WITH_AES_128_CBC_SHA,
-    TLS1_CK_ECDH_ECDSA_WITH_AES_256_CBC_SHA,
     TLS1_CK_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
     TLS1_CK_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
-    TLS1_CK_ECDH_RSA_WITH_AES_128_CBC_SHA,
-    TLS1_CK_ECDH_RSA_WITH_AES_256_CBC_SHA,
     TLS1_CK_ECDHE_RSA_WITH_AES_128_CBC_SHA,
     TLS1_CK_ECDHE_RSA_WITH_AES_256_CBC_SHA,
     TLS1_CK_ECDHE_ECDSA_WITH_AES_128_SHA256,
@@ -463,15 +438,10 @@ SSLContext::SSLFalseStartChecker::SSLFalseStartChecker() :
     TLS1_CK_ECDH_ECDSA_WITH_AES_256_SHA384,
     TLS1_CK_ECDHE_RSA_WITH_AES_128_SHA256,
     TLS1_CK_ECDHE_RSA_WITH_AES_256_SHA384,
-    TLS1_CK_ECDH_RSA_WITH_AES_128_SHA256,
-    TLS1_CK_ECDH_RSA_WITH_AES_256_SHA384,
     TLS1_CK_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
     TLS1_CK_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-    TLS1_CK_ECDH_ECDSA_WITH_AES_128_GCM_SHA256,
-    TLS1_CK_ECDH_ECDSA_WITH_AES_256_GCM_SHA384,
     TLS1_CK_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
     TLS1_CK_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-    TLS1_CK_ECDH_RSA_WITH_AES_128_GCM_SHA256,
   } {
   length_ = sizeof(ciphers_)/sizeof(ciphers_[0]);
   width_ = sizeof(ciphers_[0]);
@@ -513,13 +483,21 @@ int SSLContext::selectNextProtocolCallback(
   }
 
   unsigned char *client;
-  int client_len;
-  if (ctx->advertisedNextProtocols_.empty()) {
-    client = (unsigned char *) "";
-    client_len = 0;
-  } else {
-    client = ctx->advertisedNextProtocols_[0].protocols;
-    client_len = ctx->advertisedNextProtocols_[0].length;
+  unsigned int client_len;
+  bool filtered = false;
+  auto cpf = ctx->getClientProtocolFilterCallback();
+  if (cpf) {
+    filtered = (*cpf)(&client, &client_len, server, server_len);
+  }
+
+  if (!filtered) {
+    if (ctx->advertisedNextProtocols_.empty()) {
+      client = (unsigned char *) "";
+      client_len = 0;
+    } else {
+      client = ctx->advertisedNextProtocols_[0].protocols;
+      client_len = ctx->advertisedNextProtocols_[0].length;
+    }
   }
 
   int retval = SSL_select_next_proto(out, outlen, server, server_len,

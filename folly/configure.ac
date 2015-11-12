@@ -120,7 +120,7 @@ AM_PATH_PYTHON
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_HEADERS([fcntl.h features.h inttypes.h limits.h stdint.h stdlib.h string.h sys/time.h unistd.h mutex.h malloc.h emmintrin.h byteswap.h bits/functexcept.h bits/c++config.h])
+AC_CHECK_HEADERS([fcntl.h features.h inttypes.h limits.h stdint.h stdlib.h string.h sys/time.h unistd.h mutex.h malloc.h byteswap.h bits/functexcept.h bits/c++config.h])
 
 AC_CHECK_HEADER(double-conversion/double-conversion.h, [], [AC_MSG_ERROR(
                 [Couldn't find double-conversion.h, please download from \
@@ -229,6 +229,26 @@ AC_CACHE_CHECK(
 
 if test "$folly_cv_lib_libcpp" = yes; then
   AC_DEFINE([USE_LIBCPP], [1], [Define to 1 if we are using libc++.])
+fi
+
+AC_CACHE_CHECK(
+  [for c++11 atomic support without GNU Atomic library],
+  [folly_cv_lib_libatomic],
+  [AC_LINK_IFELSE(
+    [AC_LANG_SOURCE[
+      #include <atomic>
+      int main() {
+        struct Test { int val; };
+        std::atomic<Test> s;
+        s.is_lock_free();
+      }
+    ]],
+    [folly_cv_lib_libatomic=yes],
+    [folly_cv_lib_libatomic=no])])
+
+if test "$folly_cv_lib_libatomic" = no; then
+  AC_HAVE_LIBRARY([atomic],[],[AC_MSG_ERROR(
+                  [Please install the GNU Atomic library])])
 fi
 
 AC_CACHE_CHECK(
@@ -426,6 +446,7 @@ AC_CHECK_HEADER([lz4.h], AC_CHECK_LIB([lz4], [LZ4_decompress_safe]))
 AC_CHECK_HEADER([snappy.h], AC_CHECK_LIB([snappy], [main]))
 AC_CHECK_HEADER([zlib.h], AC_CHECK_LIB([z], [main]))
 AC_CHECK_HEADER([lzma.h], AC_CHECK_LIB([lzma], [main]))
+AC_CHECK_HEADER([zstd.h], AC_CHECK_LIB([zstd], [main]))
 
 # Include directory that contains "folly" so #include <folly/Foo.h> works
 AM_CPPFLAGS='-I$(top_srcdir)/..'

@@ -101,7 +101,10 @@ namespace folly {
 // has issues when inlining is used, so disable that as well.
 #if defined(__clang__)
 # if __has_feature(address_sanitizer)
-#  if __has_attribute(__no_address_safety_analysis__)
+#  if __has_attribute(__no_sanitize__)
+#   define FBSTRING_DISABLE_ADDRESS_SANITIZER \
+      __attribute__((__no_sanitize__("address"), __noinline__))
+#  elif __has_attribute(__no_address_safety_analysis__)
 #   define FBSTRING_DISABLE_ADDRESS_SANITIZER \
       __attribute__((__no_address_safety_analysis__, __noinline__))
 #  elif __has_attribute(__no_sanitize_address__)
@@ -290,16 +293,7 @@ protected:
   static_assert(
       kIsLittleEndian || kIsBigEndian, "unable to identify endianness");
 public:
-  fbstring_core() noexcept {
-    // Only initialize the tag, will set the MSBs (i.e. the small
-    // string size) to zero too
-    ml_.capacity_ = kIsLittleEndian
-      ? maxSmallSize << (8 * (sizeof(size_t) - sizeof(Char)))
-      : ml_.capacity_ = maxSmallSize << 2;
-    // or: setSmallSize(0);
-    writeTerminator();
-    assert(category() == Category::isSmall && size() == 0);
-  }
+  fbstring_core() noexcept { reset(); }
 
   fbstring_core(const fbstring_core & rhs) {
     assert(&rhs != this);
@@ -311,18 +305,12 @@ public:
           "fbstring layout failure");
       static_assert(offsetof(MediumLarge, capacity_) == 2 * sizeof(ml_.data_),
           "fbstring layout failure");
-      const size_t size = rhs.smallSize();
-      if (size == 0) {
-        ml_.capacity_ = rhs.ml_.capacity_;
-        writeTerminator();
-      } else {
-        // Just write the whole thing, don't look at details. In
-        // particular we need to copy capacity anyway because we want
-        // to set the size (don't forget that the last character,
-        // which stores a short string's length, is shared with the
-        // ml_.capacity field).
-        ml_ = rhs.ml_;
-      }
+      // Just write the whole thing, don't look at details. In
+      // particular we need to copy capacity anyway because we want
+      // to set the size (don't forget that the last character,
+      // which stores a short string's length, is shared with the
+      // ml_.capacity field).
+      ml_ = rhs.ml_;
       assert(category() == Category::isSmall && this->size() == rhs.size());
     } else if (rhs.category() == Category::isLarge) {
       // Large strings are just refcounted
@@ -350,14 +338,11 @@ public:
   }
 
   fbstring_core(fbstring_core&& goner) noexcept {
-    if (goner.category() == Category::isSmall) {
-      // Just copy, leave the goner in peace
-      new(this) fbstring_core(goner.small_, goner.smallSize());
-    } else {
-      // Take goner's guts
-      ml_ = goner.ml_;
+    // Take goner's guts
+    ml_ = goner.ml_;
+    if (goner.category() != Category::isSmall) {
       // Clean goner's carcass
-      goner.setSmallSize(0);
+      goner.reset();
     }
   }
 
@@ -463,7 +448,7 @@ public:
     } else {
       // No need for the memory
       free(data);
-      setSmallSize(0);
+      reset();
     }
   }
 
@@ -722,6 +707,19 @@ public:
 private:
   // Disabled
   fbstring_core & operator=(const fbstring_core & rhs);
+
+  // Equivalent to setSmallSize(0), but with specialized
+  // writeTerminator which doesn't re-check the category after
+  // capacity_ is overwritten.
+  void reset() {
+    // Only initialize the tag, will set the MSBs (i.e. the small
+    // string size) to zero too.
+    ml_.capacity_ = kIsLittleEndian
+      ? maxSmallSize << (8 * (sizeof(size_t) - sizeof(Char)))
+      : maxSmallSize << 2;
+    small_[0] = '\0';
+    assert(category() == Category::isSmall && size() == 0);
+  }
 
   struct RefCounted {
     std::atomic<size_t> refCount_;
@@ -1008,7 +1006,23 @@ private:
 
 public:
   // C++11 21.4.2 construct/copy/destroy
-  explicit basic_fbstring(const A& /*a*/ = A()) noexcept {
+
+  // Note: while the following two constructors can be (and previously were)
+  // collapsed into one constructor written this way:
+  //
+  //   explicit basic_fbstring(const A& a = A()) noexcept { }
+  //
+  // This can cause Clang (at least version 3.7) to fail with the error:
+  //   "chosen constructor is explicit in copy-initialization ...
+  //   in implicit initialization of field '(x)' with omitted initializer"
+  //
+  // if used in a struct which is default-initialized.  Hence the split into
+  // these two separate constructors.
+
+  basic_fbstring() noexcept : basic_fbstring(A()) {
+  }
+
+  explicit basic_fbstring(const A&) noexcept {
   }
 
   basic_fbstring(const basic_fbstring& str)

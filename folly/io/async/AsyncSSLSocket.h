@@ -31,9 +31,6 @@
 #include <folly/io/IOBuf.h>
 #include <folly/io/Cursor.h>
 
-using folly::io::Cursor;
-using std::unique_ptr;
-
 namespace folly {
 
 class SSLException: public folly::AsyncSocketException {
@@ -80,6 +77,7 @@ class SSLException: public folly::AsyncSocketException {
 class AsyncSSLSocket : public virtual AsyncSocket {
  public:
   typedef std::unique_ptr<AsyncSSLSocket, Destructor> UniquePtr;
+  using X509_deleter = folly::static_function_deleter<X509, &X509_free>;
 
   class HandshakeCB {
    public:
@@ -275,6 +273,7 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   virtual void shutdownWriteNow() override;
   virtual bool good() const override;
   virtual bool connecting() const override;
+  virtual std::string getApplicationProtocol() noexcept override;
 
   bool isEorTrackingEnabled() const override;
   virtual void setEorTracking(bool track) override;
@@ -322,10 +321,10 @@ class AsyncSSLSocket : public virtual AsyncSocket {
 
   /**
    * Initiate an SSL connection on the socket
-   * THe callback will be invoked and uninstalled when an SSL connection
+   * The callback will be invoked and uninstalled when an SSL connection
    * has been establshed on the underlying socket.
-   * The verification option verifyPeer is applied if its passed explicitly.
-   * If its not, the options in SSLContext set on the underying SSLContext
+   * The verification option verifyPeer is applied if it's passed explicitly.
+   * If it's not, the options in SSLContext set on the underlying SSLContext
    * are applied.
    *
    * @param callback callback object to invoke on success/failure
@@ -453,6 +452,12 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   int getSSLVersion() const;
 
   /**
+   * Get the signature algorithm used in the cert that is used for this
+   * connection.
+   */
+  const char *getSSLCertSigAlgName() const;
+
+  /**
    * Get the certificate size used for this SSL connection.
    */
   int getSSLCertSize() const;
@@ -485,6 +490,10 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   virtual void detachEventBase() override {
     AsyncSocket::detachEventBase();
     handshakeTimeout_.detachEventBase();
+  }
+
+  virtual bool isDetachable() const override {
+    return AsyncSocket::isDetachable() && !handshakeTimeout_.isScheduled();
   }
 
   virtual void attachTimeoutManager(TimeoutManager* manager) {
@@ -720,6 +729,13 @@ class AsyncSSLSocket : public virtual AsyncSocket {
     return clientHelloInfo_.get();
   }
 
+  /**
+   * Returns the time taken to complete a handshake.
+   */
+  std::chrono::nanoseconds getHandshakeTime() const {
+    return handshakeEndTime_ - handshakeStartTime_;
+  }
+
   void setMinWriteSize(size_t minWriteSize) {
     minWriteSize_ = minWriteSize;
   }
@@ -729,6 +745,18 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   }
 
   void setReadCB(ReadCallback* callback) override;
+
+  /**
+   * Returns the peer certificate, or nullptr if no peer certificate received.
+   */
+  std::unique_ptr<X509, X509_deleter> getPeerCert() const {
+    if (!ssl_) {
+      return nullptr;
+    }
+
+    X509* cert = SSL_get_peer_certificate(ssl_);
+    return std::unique_ptr<X509, X509_deleter>(cert);
+  }
 
  private:
 
@@ -799,6 +827,7 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   // Inherit error handling methods from AsyncSocket, plus the following.
   void failHandshake(const char* fn, const AsyncSocketException& ex);
 
+  void invokeHandshakeErr(const AsyncSocketException& ex);
   void invokeHandshakeCB();
 
   static void sslInfoCallback(const SSL *ssl, int type, int val);
@@ -845,7 +874,11 @@ class AsyncSSLSocket : public virtual AsyncSocket {
   static int sslVerifyCallback(int preverifyOk, X509_STORE_CTX* ctx);
 
   bool parseClientHello_{false};
-  unique_ptr<ClientHelloInfo> clientHelloInfo_;
+  std::unique_ptr<ClientHelloInfo> clientHelloInfo_;
+
+  // Time taken to complete the ssl handshake.
+  std::chrono::steady_clock::time_point handshakeStartTime_;
+  std::chrono::steady_clock::time_point handshakeEndTime_;
 };
 
 } // namespace

@@ -18,7 +18,7 @@
 
 #include <folly/Singleton.h>
 #include <folly/io/async/EventBase.h>
-
+#include <folly/test/SingletonTestStructs.h>
 #include <folly/Benchmark.h>
 
 #include <glog/logging.h>
@@ -26,63 +26,6 @@
 #include <boost/thread/barrier.hpp>
 
 using namespace folly;
-
-// A simple class that tracks how often instances of the class and
-// subclasses are created, and the ordering.  Also tracks a global
-// unique counter for each object.
-std::atomic<size_t> global_counter(19770326);
-struct Watchdog {
-  static std::vector<Watchdog*> creation_order;
-  Watchdog() : serial_number(++global_counter) {
-    creation_order.push_back(this);
-  }
-
-  ~Watchdog() {
-    if (creation_order.back() != this) {
-      throw std::out_of_range("Watchdog destruction order mismatch");
-    }
-    creation_order.pop_back();
-  }
-
-  const size_t serial_number;
-  size_t livingWatchdogCount() const { return creation_order.size(); }
-
-  Watchdog(const Watchdog&) = delete;
-  Watchdog& operator=(const Watchdog&) = delete;
-  Watchdog(Watchdog&&) noexcept = default;
-};
-
-std::vector<Watchdog*> Watchdog::creation_order;
-
-// Some basic types we use for tracking.
-struct ChildWatchdog : public Watchdog {};
-struct GlobalWatchdog : public Watchdog {};
-struct UnregisteredWatchdog : public Watchdog {};
-
-namespace {
-Singleton<GlobalWatchdog> global_watchdog;
-}
-
-// Test basic global usage (the default way singletons will generally
-// be used).
-TEST(Singleton, BasicGlobalUsage) {
-  EXPECT_EQ(Watchdog::creation_order.size(), 0);
-  EXPECT_EQ(SingletonVault::singleton()->registeredSingletonCount(), 1);
-  EXPECT_EQ(SingletonVault::singleton()->livingSingletonCount(), 0);
-
-  {
-    std::shared_ptr<GlobalWatchdog> wd1 = Singleton<GlobalWatchdog>::try_get();
-    EXPECT_NE(wd1, nullptr);
-    EXPECT_EQ(Watchdog::creation_order.size(), 1);
-    std::shared_ptr<GlobalWatchdog> wd2 = Singleton<GlobalWatchdog>::try_get();
-    EXPECT_NE(wd2, nullptr);
-    EXPECT_EQ(wd1.get(), wd2.get());
-    EXPECT_EQ(Watchdog::creation_order.size(), 1);
-  }
-
-  SingletonVault::singleton()->destroyInstances();
-  EXPECT_EQ(Watchdog::creation_order.size(), 0);
-}
 
 TEST(Singleton, MissingSingleton) {
   EXPECT_DEATH([]() { auto u = Singleton<UnregisteredWatchdog>::try_get(); }(),
@@ -444,7 +387,7 @@ template <typename T, typename Tag = detail::DefaultTag>
 using SingletonCreationError = Singleton<T, Tag, CreationErrorTag>;
 
 TEST(Singleton, SingletonCreationError) {
-  auto& vault = *SingletonVault::singleton<CreationErrorTag>();
+  SingletonVault::singleton<CreationErrorTag>();
   SingletonCreationError<ErrorConstructor> error_once_singleton;
 
   // first time should error out
@@ -496,6 +439,8 @@ TEST(Singleton, SingletonEagerInitSync) {
                   [&] {didEagerInit = true; return new std::string("foo"); })
               .shouldEagerInit();
   vault.registrationComplete();
+  EXPECT_FALSE(didEagerInit);
+  vault.doEagerInit();
   EXPECT_TRUE(didEagerInit);
   sing.get_weak();  // (avoid compile error complaining about unused var 'sing')
 }
@@ -512,10 +457,12 @@ TEST(Singleton, SingletonEagerInitAsync) {
                   [&] {didEagerInit = true; return new std::string("foo"); })
               .shouldEagerInit();
   folly::EventBase eb;
-  vault.setEagerInitExecutor(&eb);
+  folly::Baton<> done;
   vault.registrationComplete();
   EXPECT_FALSE(didEagerInit);
+  vault.doEagerInitVia(eb, &done);
   eb.loop();
+  done.wait();
   EXPECT_TRUE(didEagerInit);
   sing.get_weak();  // (avoid compile error complaining about unused var 'sing')
 }
@@ -582,23 +529,23 @@ TEST(Singleton, SingletonEagerInitParallel) {
     initCounter.store(0);
 
     {
-      boost::barrier barrier(kThreads + 1);
+      std::vector<std::shared_ptr<std::thread>> threads;
+      boost::barrier barrier(kThreads);
       TestEagerInitParallelExecutor exe(kThreads);
-      vault.setEagerInitExecutor(&exe);
-      vault.registrationComplete(false);
+      vault.registrationComplete();
 
       EXPECT_EQ(0, initCounter.load());
 
       for (size_t j = 0; j < kThreads; j++) {
-        exe.add([&] {
+        threads.push_back(std::make_shared<std::thread>([&] {
           barrier.wait();
-          vault.startEagerInit();
-          barrier.wait();
-        });
+          vault.doEagerInitVia(exe);
+        }));
       }
 
-      barrier.wait();  // to await all threads' readiness
-      barrier.wait();  // to await all threads' completion
+      for (auto thread : threads) {
+        thread->join();
+      }
     }
 
     EXPECT_EQ(1, initCounter.load());
@@ -652,16 +599,47 @@ struct BenchmarkSingleton {
   int val = 0;
 };
 
-BENCHMARK(NormalSingleton, n) {
-  for (size_t i = 0; i < n; ++i) {
+void run4Threads(std::function<void()> f) {
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < 4; ++ i) {
+    threads.emplace_back(f);
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+}
+
+void normalSingleton(size_t n) {
+  for (size_t i = 0; i < n; ++ i) {
     doNotOptimizeAway(getNormalSingleton());
   }
 }
 
-BENCHMARK_RELATIVE(MeyersSingleton, n) {
+BENCHMARK(NormalSingleton, n) {
+  normalSingleton(n);
+}
+
+BENCHMARK(NormalSingleton4Threads, n) {
+  run4Threads([=]() {
+      normalSingleton(n);
+    });
+}
+
+void meyersSingleton(size_t n) {
   for (size_t i = 0; i < n; ++i) {
     doNotOptimizeAway(getMeyersSingleton());
   }
+}
+
+
+BENCHMARK_RELATIVE(MeyersSingleton, n) {
+  meyersSingleton(n);
+}
+
+BENCHMARK_RELATIVE(MeyersSingleton4Threads, n) {
+  run4Threads([=]() {
+      meyersSingleton(n);
+    });
 }
 
 struct BenchmarkTag {};
@@ -669,21 +647,60 @@ template <typename T, typename Tag = detail::DefaultTag>
 using SingletonBenchmark = Singleton <T, Tag, BenchmarkTag>;
 
 struct GetTag{};
+struct GetSharedTag{};
 struct GetWeakTag{};
 
 SingletonBenchmark<BenchmarkSingleton, GetTag> benchmark_singleton_get;
+SingletonBenchmark<BenchmarkSingleton, GetSharedTag>
+benchmark_singleton_get_shared;
 SingletonBenchmark<BenchmarkSingleton, GetWeakTag> benchmark_singleton_get_weak;
 
-BENCHMARK_RELATIVE(FollySingleton, n) {
+void follySingletonRaw(size_t n) {
   for (size_t i = 0; i < n; ++i) {
-    SingletonBenchmark<BenchmarkSingleton, GetTag>::try_get();
+    SingletonBenchmark<BenchmarkSingleton, GetTag>::get();
   }
 }
 
-BENCHMARK_RELATIVE(FollySingletonWeak, n) {
+BENCHMARK_RELATIVE(FollySingletonRaw, n) {
+  follySingletonRaw(n);
+}
+
+BENCHMARK_RELATIVE(FollySingletonRaw4Threads, n) {
+  run4Threads([=]() {
+      follySingletonRaw(n);
+    });
+}
+
+void follySingletonSharedPtr(size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    SingletonBenchmark<BenchmarkSingleton, GetSharedTag>::try_get();
+  }
+}
+
+BENCHMARK_RELATIVE(FollySingletonSharedPtr, n) {
+  follySingletonSharedPtr(n);
+}
+
+BENCHMARK_RELATIVE(FollySingletonSharedPtr4Threads, n) {
+  run4Threads([=]() {
+      follySingletonSharedPtr(n);
+    });
+}
+
+void follySingletonWeakPtr(size_t n) {
   for (size_t i = 0; i < n; ++i) {
     SingletonBenchmark<BenchmarkSingleton, GetWeakTag>::get_weak();
   }
+}
+
+BENCHMARK_RELATIVE(FollySingletonWeakPtr, n) {
+  follySingletonWeakPtr(n);
+}
+
+BENCHMARK_RELATIVE(FollySingletonWeakPtr4Threads, n) {
+  run4Threads([=]() {
+      follySingletonWeakPtr(n);
+    });
 }
 
 int main(int argc, char* argv[]) {

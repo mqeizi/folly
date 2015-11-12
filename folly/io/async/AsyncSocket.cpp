@@ -63,14 +63,16 @@ const AsyncSocketException socketShutdownForWritesEx(
  */
 class AsyncSocket::BytesWriteRequest : public AsyncSocket::WriteRequest {
  public:
-  static BytesWriteRequest* newRequest(AsyncSocket* socket,
-                                       WriteCallback* callback,
-                                       const iovec* ops,
-                                       uint32_t opCount,
-                                       uint32_t partialWritten,
-                                       uint32_t bytesWritten,
-                                       unique_ptr<IOBuf>&& ioBuf,
-                                       WriteFlags flags) {
+  static BytesWriteRequest* newRequest(
+      AsyncSocket* socket,
+      WriteCallback* callback,
+      const iovec* ops,
+      uint32_t opCount,
+      uint32_t partialWritten,
+      uint32_t bytesWritten,
+      unique_ptr<IOBuf>&& ioBuf,
+      WriteFlags flags,
+      BufferCallback* bufferCallback = nullptr) {
     assert(opCount > 0);
     // Since we put a variable size iovec array at the end
     // of each BytesWriteRequest, we have to manually allocate the memory.
@@ -82,7 +84,7 @@ class AsyncSocket::BytesWriteRequest : public AsyncSocket::WriteRequest {
 
     return new(buf) BytesWriteRequest(socket, callback, ops, opCount,
                                       partialWritten, bytesWritten,
-                                      std::move(ioBuf), flags);
+                                      std::move(ioBuf), flags, bufferCallback);
   }
 
   void destroy() override {
@@ -136,8 +138,9 @@ class AsyncSocket::BytesWriteRequest : public AsyncSocket::WriteRequest {
                     uint32_t partialBytes,
                     uint32_t bytesWritten,
                     unique_ptr<IOBuf>&& ioBuf,
-                    WriteFlags flags)
-    : AsyncSocket::WriteRequest(socket, callback)
+                    WriteFlags flags,
+                    BufferCallback* bufferCallback = nullptr)
+    : AsyncSocket::WriteRequest(socket, callback, bufferCallback)
     , opCount_(opCount)
     , opIndex_(0)
     , flags_(flags)
@@ -318,6 +321,10 @@ void AsyncSocket::connect(ConnectCallback* callback,
     return invalidState(callback);
   }
 
+  connectStartTime_ = std::chrono::steady_clock::now();
+  // Make connect end time at least >= connectStartTime.
+  connectEndTime_ = connectStartTime_;
+
   assert(fd_ == -1);
   state_ = StateEnum::CONNECTING;
   connectCallback_ = callback;
@@ -463,10 +470,7 @@ void AsyncSocket::connect(ConnectCallback* callback,
   assert(readCallback_ == nullptr);
   assert(writeReqHead_ == nullptr);
   state_ = StateEnum::ESTABLISHED;
-  if (callback) {
-    connectCallback_ = nullptr;
-    callback->connectSuccess();
-  }
+  invokeConnectSuccess();
 }
 
 void AsyncSocket::connect(ConnectCallback* callback,
@@ -607,43 +611,46 @@ AsyncSocket::ReadCallback* AsyncSocket::getReadCallback() const {
 }
 
 void AsyncSocket::write(WriteCallback* callback,
-                         const void* buf, size_t bytes, WriteFlags flags) {
+                         const void* buf, size_t bytes, WriteFlags flags,
+                         BufferCallback* bufCallback) {
   iovec op;
   op.iov_base = const_cast<void*>(buf);
   op.iov_len = bytes;
-  writeImpl(callback, &op, 1, std::move(unique_ptr<IOBuf>()), flags);
+  writeImpl(callback, &op, 1, unique_ptr<IOBuf>(), flags, bufCallback);
 }
 
 void AsyncSocket::writev(WriteCallback* callback,
                           const iovec* vec,
                           size_t count,
-                          WriteFlags flags) {
-  writeImpl(callback, vec, count, std::move(unique_ptr<IOBuf>()), flags);
+                          WriteFlags flags,
+                          BufferCallback* bufCallback) {
+  writeImpl(callback, vec, count, unique_ptr<IOBuf>(), flags, bufCallback);
 }
 
 void AsyncSocket::writeChain(WriteCallback* callback, unique_ptr<IOBuf>&& buf,
-                              WriteFlags flags) {
+                              WriteFlags flags, BufferCallback* bufCallback) {
   constexpr size_t kSmallSizeMax = 64;
   size_t count = buf->countChainElements();
   if (count <= kSmallSizeMax) {
     iovec vec[BOOST_PP_IF(FOLLY_HAVE_VLA, count, kSmallSizeMax)];
-    writeChainImpl(callback, vec, count, std::move(buf), flags);
+    writeChainImpl(callback, vec, count, std::move(buf), flags, bufCallback);
   } else {
     iovec* vec = new iovec[count];
-    writeChainImpl(callback, vec, count, std::move(buf), flags);
+    writeChainImpl(callback, vec, count, std::move(buf), flags, bufCallback);
     delete[] vec;
   }
 }
 
 void AsyncSocket::writeChainImpl(WriteCallback* callback, iovec* vec,
-    size_t count, unique_ptr<IOBuf>&& buf, WriteFlags flags) {
+    size_t count, unique_ptr<IOBuf>&& buf, WriteFlags flags,
+    BufferCallback* bufCallback) {
   size_t veclen = buf->fillIov(vec, count);
-  writeImpl(callback, vec, veclen, std::move(buf), flags);
+  writeImpl(callback, vec, veclen, std::move(buf), flags, bufCallback);
 }
 
 void AsyncSocket::writeImpl(WriteCallback* callback, const iovec* vec,
                              size_t count, unique_ptr<IOBuf>&& buf,
-                             WriteFlags flags) {
+                             WriteFlags flags, BufferCallback* bufCallback) {
   VLOG(6) << "AsyncSocket::writev() this=" << this << ", fd=" << fd_
           << ", callback=" << callback << ", count=" << count
           << ", state=" << state_;
@@ -687,7 +694,11 @@ void AsyncSocket::writeImpl(WriteCallback* callback, const iovec* vec,
           callback->writeSuccess();
         }
         return;
-      } // else { continue writing the next writeReq }
+      } else { // continue writing the next writeReq
+        if (bufCallback) {
+          bufCallback->onEgressBuffered();
+        }
+      }
       mustRegister = true;
     }
   } else if (!connecting()) {
@@ -700,7 +711,8 @@ void AsyncSocket::writeImpl(WriteCallback* callback, const iovec* vec,
   try {
     req = BytesWriteRequest::newRequest(this, callback, vec + countWritten,
                                         count - countWritten, partialWritten,
-                                        bytesWritten, std::move(ioBuf), flags);
+                                        bytesWritten, std::move(ioBuf), flags,
+                                        bufCallback);
   } catch (const std::exception& ex) {
     // we mainly expect to catch std::bad_alloc here
     AsyncSocketException tex(AsyncSocketException::INTERNAL_ERROR,
@@ -838,11 +850,7 @@ void AsyncSocket::closeNow() {
         doClose();
       }
 
-      if (connectCallback_) {
-        ConnectCallback* callback = connectCallback_;
-        connectCallback_ = nullptr;
-        callback->connectErr(socketClosedLocallyEx);
-      }
+      invokeConnectErr(socketClosedLocallyEx);
 
       failAllWrites(socketClosedLocallyEx);
 
@@ -1347,11 +1355,13 @@ void AsyncSocket::handleRead() noexcept {
         // No more data to read right now.
         return;
     } else if (bytesRead == READ_ERROR) {
+      readErr_ = READ_ERROR;
       AsyncSocketException ex(AsyncSocketException::INTERNAL_ERROR,
                              withAddr("recv() failed"), errno);
       return failRead(__func__, ex);
     } else {
       assert(bytesRead == READ_EOF);
+      readErr_ = READ_EOF;
       // EOF
       shutdownFlags_ |= SHUT_READ;
       if (!updateEventRegistration(0, EventHandler::READ)) {
@@ -1474,6 +1484,11 @@ void AsyncSocket::handleWrite() noexcept {
       }
       // We'll continue around the loop, trying to write another request
     } else {
+      // Notify BufferCallback:
+      BufferCallback* bufferCallback = writeReqHead_->getBufferCallback();
+      if (bufferCallback) {
+        bufferCallback->onEgressBuffered();
+      }
       // Partial write.
       writeReqHead_->consume();
       // Stop after a partial write; it's highly likely that a subsequent write
@@ -1615,13 +1630,7 @@ void AsyncSocket::handleConnect() noexcept {
   // callbacks (since the callbacks may call detachEventBase()).
   EventBase* originalEventBase = eventBase_;
 
-  // Call the connect callback.
-  if (connectCallback_) {
-    ConnectCallback* callback = connectCallback_;
-    connectCallback_ = nullptr;
-    callback->connectSuccess();
-  }
-
+  invokeConnectSuccess();
   // Note that the connect callback may have changed our state.
   // (set or unset the read callback, called write(), closed the socket, etc.)
   // The following code needs to handle these situations correctly.
@@ -1803,12 +1812,7 @@ void AsyncSocket::finishFail() {
 
   AsyncSocketException ex(AsyncSocketException::INTERNAL_ERROR,
                          withAddr("socket closing after error"));
-  if (connectCallback_) {
-    ConnectCallback* callback = connectCallback_;
-    connectCallback_ = nullptr;
-    callback->connectErr(ex);
-  }
-
+  invokeConnectErr(ex);
   failAllWrites(ex);
 
   if (readCallback_) {
@@ -1834,12 +1838,7 @@ void AsyncSocket::failConnect(const char* fn, const AsyncSocketException& ex) {
                << ex.what();
   startFail();
 
-  if (connectCallback_ != nullptr) {
-    ConnectCallback* callback = connectCallback_;
-    connectCallback_ = nullptr;
-    callback->connectErr(ex);
-  }
-
+  invokeConnectErr(ex);
   finishFail();
 }
 
@@ -1929,6 +1928,7 @@ void AsyncSocket::invalidState(ConnectCallback* callback) {
 
   AsyncSocketException ex(AsyncSocketException::ALREADY_OPEN,
                          "connect() called with socket in invalid state");
+  connectEndTime_ = std::chrono::steady_clock::now();
   if (state_ == StateEnum::CLOSED || state_ == StateEnum::ERROR) {
     if (callback) {
       callback->connectErr(ex);
@@ -1942,6 +1942,24 @@ void AsyncSocket::invalidState(ConnectCallback* callback) {
       callback->connectErr(ex);
     }
     finishFail();
+  }
+}
+
+void AsyncSocket::invokeConnectErr(const AsyncSocketException& ex) {
+  connectEndTime_ = std::chrono::steady_clock::now();
+  if (connectCallback_) {
+    ConnectCallback* callback = connectCallback_;
+    connectCallback_ = nullptr;
+    callback->connectErr(ex);
+  }
+}
+
+void AsyncSocket::invokeConnectSuccess() {
+  connectEndTime_ = std::chrono::steady_clock::now();
+  if (connectCallback_) {
+    ConnectCallback* callback = connectCallback_;
+    connectCallback_ = nullptr;
+    callback->connectSuccess();
   }
 }
 
