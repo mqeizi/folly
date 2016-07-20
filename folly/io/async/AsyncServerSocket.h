@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,21 @@
 
 #pragma once
 
-#include <folly/io/async/DelayedDestruction.h>
-#include <folly/io/async/EventHandler.h>
-#include <folly/io/async/EventBase.h>
-#include <folly/io/async/NotificationQueue.h>
-#include <folly/io/async/AsyncTimeout.h>
-#include <folly/io/async/AsyncSocketBase.h>
-#include <folly/io/ShutdownSocketSet.h>
 #include <folly/SocketAddress.h>
-#include <memory>
-#include <exception>
-#include <vector>
+#include <folly/io/ShutdownSocketSet.h>
+#include <folly/io/async/AsyncSocketBase.h>
+#include <folly/io/async/AsyncTimeout.h>
+#include <folly/io/async/DelayedDestruction.h>
+#include <folly/io/async/EventBase.h>
+#include <folly/io/async/EventHandler.h>
+#include <folly/io/async/NotificationQueue.h>
+#include <folly/portability/Sockets.h>
+
 #include <limits.h>
 #include <stddef.h>
-#include <sys/socket.h>
-
+#include <exception>
+#include <memory>
+#include <vector>
 
 // Due to the way kernel headers are included, this may or may not be defined.
 // Number pulled from 3.10 kernel headers.
@@ -539,7 +539,7 @@ class AsyncServerSocket : public DelayedDestruction
    *
    * Only works if called before addAcceptCallback.
    */
-  void setMaxNumPendingConnectionsPerWorker(uint32_t num) {
+  void setMaxNumMessagesInQueue(uint32_t num) {
     maxNumMsgsInQueue_ = num;
   }
 
@@ -660,6 +660,14 @@ class AsyncServerSocket : public DelayedDestruction
   }
 
   /**
+   * Tries to enable TFO if the machine supports it.
+   */
+  void setTFOEnabled(bool enabled, uint32_t maxTFOQueueSize) {
+    tfo_ = enabled;
+    tfoMaxQueueSize_ = maxTFOQueueSize;
+  }
+
+  /**
    * Get whether or not the socket is accepting new connections
    */
   bool getAccepting() const {
@@ -760,7 +768,7 @@ class AsyncServerSocket : public DelayedDestruction
     uint16_t events, int socket, sa_family_t family) noexcept;
 
   int createSocket(int family);
-  void setupSocket(int fd);
+  void setupSocket(int fd, int family);
   void bindSocket(int fd, const SocketAddress& address, bool isExistingSocket);
   void dispatchSocket(int socket, SocketAddress&& address);
   void dispatchError(const char *msg, int errnoValue);
@@ -837,6 +845,8 @@ class AsyncServerSocket : public DelayedDestruction
   bool keepAliveEnabled_;
   bool reusePortEnabled_{false};
   bool closeOnExec_;
+  bool tfo_{false};
+  uint32_t tfoMaxQueueSize_{0};
   ShutdownSocketSet* shutdownSocketSet_;
   ConnectionEventCallback* connectionEventCallback_{nullptr};
 };

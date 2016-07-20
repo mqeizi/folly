@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -84,11 +84,10 @@ struct WTCallback : public std::enable_shared_from_this<WTCallback>,
 
 } // namespace
 
-
-ThreadWheelTimekeeper::ThreadWheelTimekeeper() :
-  thread_([this]{ eventBase_.loopForever(); }),
-  wheelTimer_(new HHWheelTimer(&eventBase_, std::chrono::milliseconds(1)))
-{
+ThreadWheelTimekeeper::ThreadWheelTimekeeper()
+    : thread_([this] { eventBase_.loopForever(); }),
+      wheelTimer_(
+          HHWheelTimer::newTimer(&eventBase_, std::chrono::milliseconds(1))) {
   eventBase_.waitUntilRunning();
   eventBase_.runInEventBaseThread([this]{
     // 15 characters max
@@ -138,8 +137,8 @@ Future<Unit> ThreadWheelTimekeeper::after(Duration dur) {
 
 namespace detail {
 
-Timekeeper* getTimekeeperSingleton() {
-  return timekeeperSingleton_.get();
+std::shared_ptr<Timekeeper> getTimekeeperSingleton() {
+  return timekeeperSingleton_.try_get();
 }
 
 } // detail

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,9 +122,9 @@ void checkTWang(uint64_t r) {
 TEST(Hash, TWang_Unmix64) {
   // We'll try (1 << i), (1 << i) + 1, (1 << i) - 1
   for (int i = 1; i < 64; i++) {
-    checkTWang((1U << i) - 1);
-    checkTWang(1U << i);
-    checkTWang((1U << i) + 1);
+    checkTWang((uint64_t(1) << i) - 1);
+    checkTWang(uint64_t(1) << i);
+    checkTWang((uint64_t(1) << i) + 1);
   }
 }
 

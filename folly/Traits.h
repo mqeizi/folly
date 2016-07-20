@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,7 @@
 
 // @author: Andrei Alexandrescu
 
-#ifndef FOLLY_BASE_TRAITS_H_
-#define FOLLY_BASE_TRAITS_H_
+#pragma once
 
 #include <memory>
 #include <limits>
@@ -38,9 +37,7 @@
 #endif
 
 #include <boost/type_traits.hpp>
-#include <boost/mpl/and.hpp>
 #include <boost/mpl/has_xxx.hpp>
-#include <boost/mpl/not.hpp>
 
 namespace folly {
 
@@ -93,16 +90,15 @@ namespace folly {
 
 namespace traits_detail {
 
-#define FOLLY_HAS_TRUE_XXX(name)                          \
-  BOOST_MPL_HAS_XXX_TRAIT_DEF(name);                      \
-  template <class T> struct name ## _is_true              \
-    : std::is_same<typename T::name, std::true_type> {};  \
-  template <class T> struct has_true_ ## name             \
-    : std::conditional<                                   \
-        has_ ## name <T>::value,                          \
-        name ## _is_true<T>,                              \
-        std::false_type                                   \
-      >:: type {};
+#define FOLLY_HAS_TRUE_XXX(name)                                             \
+  BOOST_MPL_HAS_XXX_TRAIT_DEF(name)                                          \
+  template <class T>                                                         \
+  struct name##_is_true : std::is_same<typename T::name, std::true_type> {}; \
+  template <class T>                                                         \
+  struct has_true_##name : std::conditional<                                 \
+                               has_##name<T>::value,                         \
+                               name##_is_true<T>,                            \
+                               std::false_type>::type {};
 
 FOLLY_HAS_TRUE_XXX(IsRelocatable)
 FOLLY_HAS_TRUE_XXX(IsZeroInitializable)
@@ -132,6 +128,25 @@ template <class T> struct IsZeroInitializable
       !std::is_class<T>::value ||
       traits_detail::has_true_IsZeroInitializable<T>::value
     > {};
+
+template <typename...>
+struct Conjunction : std::true_type {};
+template <typename T>
+struct Conjunction<T> : T {};
+template <typename T, typename... TList>
+struct Conjunction<T, TList...>
+    : std::conditional<T::value, Conjunction<TList...>, T>::type {};
+
+template <typename...>
+struct Disjunction : std::false_type {};
+template <typename T>
+struct Disjunction<T> : T {};
+template <typename T, typename... TList>
+struct Disjunction<T, TList...>
+    : std::conditional<T::value, T, Disjunction<TList...>>::type {};
+
+template <typename T>
+struct Negation : std::integral_constant<bool, !T::value> {};
 
 } // namespace folly
 
@@ -271,8 +286,9 @@ template <class T> class shared_ptr;
 
 template <class T, class U>
 struct has_nothrow_constructor< std::pair<T, U> >
-    : ::boost::mpl::and_< has_nothrow_constructor<T>,
-                          has_nothrow_constructor<U> > {};
+    : std::integral_constant<bool,
+        has_nothrow_constructor<T>::value &&
+        has_nothrow_constructor<U>::value> {};
 
 } // namespace boost
 
@@ -280,8 +296,10 @@ namespace folly {
 
 // STL commonly-used types
 template <class T, class U>
-struct IsRelocatable<  std::pair<T, U> >
-    : ::boost::mpl::and_< IsRelocatable<T>, IsRelocatable<U> > {};
+struct IsRelocatable< std::pair<T, U> >
+    : std::integral_constant<bool,
+        IsRelocatable<T>::value &&
+        IsRelocatable<U>::value> {};
 
 // Is T one of T1, T2, ..., Tn?
 template <class T, class... Ts>
@@ -318,10 +336,13 @@ struct is_negative_impl<T, false> {
 
 // folly::to integral specializations can end up generating code
 // inside what are really static ifs (not executed because of the templated
-// types) that violate -Wsign-compare so suppress them in order to not prevent
-// all calling code from using it.
+// types) that violate -Wsign-compare and/or -Wbool-compare so suppress them
+// in order to not prevent all calling code from using it.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsign-compare"
+#if __GNUC_PREREQ(5, 0)
+#pragma GCC diagnostic ignored "-Wbool-compare"
+#endif
 
 template <typename RHS, RHS rhs, typename LHS>
 bool less_than_impl(LHS const lhs) {
@@ -331,8 +352,6 @@ bool less_than_impl(LHS const lhs) {
     lhs < rhs;
 }
 
-#pragma GCC diagnostic pop
-
 template <typename RHS, RHS rhs, typename LHS>
 bool greater_than_impl(LHS const lhs) {
   return
@@ -340,6 +359,8 @@ bool greater_than_impl(LHS const lhs) {
     rhs < std::numeric_limits<LHS>::min() ? true :
     lhs > rhs;
 }
+
+#pragma GCC diagnostic pop
 
 } // namespace detail {
 
@@ -386,16 +407,19 @@ constexpr construct_in_place_t construct_in_place{};
 
 } // namespace folly
 
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_3(std::basic_string);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::vector);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::list);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::deque);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::unique_ptr);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(std::shared_ptr);
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(std::function);
+// gcc-5.0 changed string's implementation in libgcc to be non-relocatable
+#if __GNUC__ < 5
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_3(std::basic_string)
+#endif
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::vector)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::list)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::deque)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(std::unique_ptr)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(std::shared_ptr)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(std::function)
 
 // Boost
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(boost::shared_ptr);
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(boost::shared_ptr)
 
 #define FOLLY_CREATE_HAS_MEMBER_TYPE_TRAITS(classname, type_name) \
   template <typename T> \
@@ -478,5 +502,3 @@ FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(boost::shared_ptr);
       classname, func_name, /* nolint */ volatile); \
   FOLLY_CREATE_HAS_MEMBER_FN_TRAITS_IMPL( \
       classname, func_name, /* nolint */ volatile const)
-
-#endif //FOLLY_BASE_TRAITS_H_

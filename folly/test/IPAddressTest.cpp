@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,9 @@
 
 #include <folly/Bits.h>
 #include <folly/Format.h>
-#include <folly/String.h>
 #include <folly/MacAddress.h>
+#include <folly/String.h>
+#include <folly/detail/IPAddressSource.h>
 
 using namespace folly;
 using namespace std;
@@ -217,6 +218,28 @@ TEST(IPAddress, CtorDefault) {
   EXPECT_EQ(IPAddressV4("0.0.0.0"), v4);
   IPAddressV6 v6;
   EXPECT_EQ(IPAddressV6("::0"), v6);
+}
+
+TEST(IPAddressV4, validate) {
+  EXPECT_TRUE(IPAddressV4::validate("0.0.0.0"));
+  EXPECT_FALSE(IPAddressV4::validate("0.0.0."));
+  EXPECT_TRUE(IPAddressV4::validate("127.127.127.127"));
+}
+
+TEST(IPAddressV6, validate) {
+  EXPECT_TRUE(IPAddressV6::validate("2620:0:1cfe:face:b00c::3"));
+  EXPECT_FALSE(IPAddressV6::validate("0.0.0.0"));
+  EXPECT_TRUE(IPAddressV6::validate("[2620:0:1cfe:face:b00c::3]"));
+  EXPECT_TRUE(IPAddressV6::validate("::ffff:0.1.1.1"));
+  EXPECT_TRUE(IPAddressV6::validate("2620:0000:1cfe:face:b00c:0000:0000:0003"));
+  EXPECT_TRUE(
+      IPAddressV6::validate("2620:0000:1cfe:face:b00c:0000:127.127.127.127"));
+}
+
+TEST(IPAddress, validate) {
+  EXPECT_TRUE(IPAddress::validate("0.0.0.0"));
+  EXPECT_TRUE(IPAddress::validate("::"));
+  EXPECT_FALSE(IPAddress::validate("asdf"));
 }
 
 // Test addresses constructed using a in[6]_addr value
@@ -444,8 +467,8 @@ TEST_P(IPAddressMaskTest, Masks) {
   IPAddress ip(param.address);
   IPAddress masked = ip.mask(param.mask);
   EXPECT_EQ(param.subnet, masked.str())
-      << param.address << "/" << to_string(param.mask)
-      << " -> " << param.subnet;
+      << param.address << "/" << folly::to<std::string>(param.mask) << " -> "
+      << param.subnet;
 }
 
 // Test inSubnet calculations
@@ -567,7 +590,7 @@ TEST(IPAddress, V6Types) {
         break;
       default:
         throw std::range_error("Invalid expected type: " +
-                               to_string(tc.second));
+                               folly::to<std::string>(tc.second));
     }
   }
 }

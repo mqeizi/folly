@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -209,6 +209,27 @@ TEST(FunctionScheduler, ShutdownStart) {
   EXPECT_FALSE(fs.cancelFunction("add3")); // non existing
   delay(2);
   EXPECT_EQ(6, total);
+}
+
+TEST(FunctionScheduler, ResetFunc) {
+  int total = 0;
+  FunctionScheduler fs;
+  fs.addFunction([&] { total += 2; }, testInterval(3), "add2");
+  fs.addFunction([&] { total += 3; }, testInterval(3), "add3");
+  fs.start();
+  delay(1);
+  EXPECT_EQ(5, total);
+  EXPECT_FALSE(fs.resetFunctionTimer("NON_EXISTING"));
+  EXPECT_TRUE(fs.resetFunctionTimer("add2"));
+  delay(1);
+  // t2: after the reset, add2 should have been invoked immediately
+  EXPECT_EQ(7, total);
+  usleep(150000);
+  // t3.5: add3 should have been invoked. add2 should not
+  EXPECT_EQ(10, total);
+  delay(1);
+  // t4.5: add2 should have been invoked once more (it was reset at t1)
+  EXPECT_EQ(12, total);
 }
 
 TEST(FunctionScheduler, AddInvalid) {

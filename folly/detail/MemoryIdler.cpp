@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,20 @@
  */
 
 #include <folly/detail/MemoryIdler.h>
+
 #include <folly/Logging.h>
 #include <folly/Malloc.h>
+#include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/detail/CacheLocality.h>
+#include <folly/portability/SysMman.h>
+#include <folly/portability/Unistd.h>
+
 #include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/mman.h>
 #include <utility>
-
 
 namespace folly { namespace detail {
 
@@ -74,11 +76,11 @@ void MemoryIdler::flushLocalMallocCaches() {
     // purging the arenas is counter-productive.  We use the heuristic
     // that if narenas <= 2 * num_cpus then we shouldn't do anything here,
     // which detects when the narenas has been reduced from the default
-    size_t narenas;
+    unsigned narenas;
     unsigned arenaForCurrent;
     size_t mib[3];
     size_t miblen = 3;
-    if (mallctlRead<size_t>("opt.narenas", &narenas) == 0 &&
+    if (mallctlRead<unsigned>("opt.narenas", &narenas) == 0 &&
         narenas > 2 * CacheLocality::system().numCpus &&
         mallctlRead<unsigned>("thread.arena", &arenaForCurrent) == 0 &&
         mallctlnametomib("arena.0.purge", mib, &miblen) == 0) {
@@ -92,7 +94,8 @@ void MemoryIdler::flushLocalMallocCaches() {
 // Stack madvise isn't Linux or glibc specific, but the system calls
 // and arithmetic (and bug compatibility) are not portable.  The set of
 // platforms could be increased if it was useful.
-#if (FOLLY_X64 || FOLLY_PPC64 ) && defined(_GNU_SOURCE) && defined(__linux__)
+#if (FOLLY_X64 || FOLLY_PPC64) && defined(_GNU_SOURCE) && \
+    defined(__linux__) && !FOLLY_MOBILE
 
 static FOLLY_TLS uintptr_t tls_stackLimit;
 static FOLLY_TLS size_t tls_stackSize;

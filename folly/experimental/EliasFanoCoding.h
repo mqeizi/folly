@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@
  * "Quasi-succinct indices" (arxiv:1206.4300).
  */
 
-#ifndef FOLLY_EXPERIMENTAL_ELIAS_FANO_CODING_H
-#define FOLLY_EXPERIMENTAL_ELIAS_FANO_CODING_H
+#pragma once
 
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 #include <type_traits>
@@ -36,19 +36,13 @@
 #include <folly/experimental/Select64.h>
 #include <glog/logging.h>
 
-#ifndef __GNUC__
-#error EliasFanoCoding.h requires GCC
-#endif
-
 #if !FOLLY_X64
 #error EliasFanoCoding.h requires x86_64
 #endif
 
-#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error EliasFanoCoding.h requires little endianness
-#endif
-
 namespace folly { namespace compression {
+
+static_assert(kIsLittleEndian, "EliasFanoCoding.h requires little endianness");
 
 template <class Pointer>
 struct EliasFanoCompressedListBase {
@@ -141,7 +135,7 @@ struct EliasFanoEncoderV2 {
         forwardPointers_(reinterpret_cast<SkipValueType*>(
               result.forwardPointers)),
         result_(result) {
-    memset(result.data.data(), 0, result.data.size());
+    std::fill(result.data.begin(), result.data.end(), 0);
   }
 
   EliasFanoEncoderV2(size_t size, ValueType upperBound)
@@ -684,5 +678,3 @@ class EliasFanoReader {
 };
 
 }}  // namespaces
-
-#endif  // FOLLY_EXPERIMENTAL_ELIAS_FANO_CODING_H

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef FOLLY_ATOMICUNORDEREDMAP_H
-#define FOLLY_ATOMICUNORDEREDMAP_H
+
+#pragma once
 
 #include <atomic>
 #include <functional>
@@ -22,13 +22,15 @@
 #include <system_error>
 #include <type_traits>
 #include <stdint.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <folly/Likely.h>
+
 #include <folly/Bits.h>
 #include <folly/Conv.h>
+#include <folly/Likely.h>
 #include <folly/Random.h>
 #include <folly/detail/AtomicUnorderedMapUtils.h>
+#include <folly/portability/SysMman.h>
+#include <folly/portability/Unistd.h>
+
 #include <boost/type_traits/has_trivial_destructor.hpp>
 #include <limits>
 
@@ -178,7 +180,7 @@ struct AtomicUnorderedInsertMap {
     }
 
     // post-increment
-    ConstIterator operator++ (int dummy) {
+    ConstIterator operator++(int /* dummy */) {
       auto prev = *this;
       ++*this;
       return prev;
@@ -519,4 +521,3 @@ struct MutableData {
 
 
 }
-#endif

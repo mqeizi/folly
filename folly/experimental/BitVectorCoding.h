@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_EXPERIMENTAL_BIT_VECTOR_CODING_H
-#define FOLLY_EXPERIMENTAL_BIT_VECTOR_CODING_H
+#pragma once
 
 #include <cstdlib>
 #include <limits>
@@ -30,19 +29,13 @@
 #include <folly/experimental/Select64.h>
 #include <glog/logging.h>
 
-#ifndef __GNUC__
-#error BitVectorCoding.h requires GCC
-#endif
-
 #if !FOLLY_X64
 #error BitVectorCoding.h requires x86_64
 #endif
 
-#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error BitVectorCoding.h requires little endianness
-#endif
-
 namespace folly { namespace compression {
+
+static_assert(kIsLittleEndian, "BitVectorCoding.h requires little endianness");
 
 template <class Pointer>
 struct BitVectorCompressedListBase {
@@ -448,5 +441,3 @@ class BitVectorReader {
 };
 
 }}  // namespaces
-
-#endif  // FOLLY_EXPERIMENTAL_BIT_VECTOR_CODING_H

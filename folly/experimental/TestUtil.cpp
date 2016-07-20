@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,17 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <boost/regex.hpp>
 #include <folly/Conv.h>
 #include <folly/Exception.h>
 #include <folly/File.h>
 #include <folly/FileUtil.h>
+#include <folly/Memory.h>
 #include <folly/String.h>
-
-#ifndef _MSC_VER
-extern char** environ;
-#endif
+#include <folly/portability/Environment.h>
+#include <folly/portability/Fcntl.h>
+#include <folly/portability/Unistd.h>
 
 namespace folly {
 namespace test {
@@ -98,18 +96,20 @@ TemporaryFile::~TemporaryFile() {
   }
 }
 
-TemporaryDirectory::TemporaryDirectory(StringPiece namePrefix,
-                                       fs::path dir,
-                                       Scope scope)
-  : scope_(scope),
-    path_(generateUniquePath(std::move(dir), namePrefix)) {
-  fs::create_directory(path_);
+TemporaryDirectory::TemporaryDirectory(
+    StringPiece namePrefix,
+    fs::path dir,
+    Scope scope)
+    : scope_(scope),
+      path_(folly::make_unique<fs::path>(
+          generateUniquePath(std::move(dir), namePrefix))) {
+  fs::create_directory(path());
 }
 
 TemporaryDirectory::~TemporaryDirectory() {
-  if (scope_ == Scope::DELETE_ON_DESTRUCTION) {
+  if (scope_ == Scope::DELETE_ON_DESTRUCTION && path_ != nullptr) {
     boost::system::error_code ec;
-    fs::remove_all(path_, ec);
+    fs::remove_all(path(), ec);
     if (ec) {
       LOG(WARNING) << "recursive delete on destruction failed: " << ec;
     }

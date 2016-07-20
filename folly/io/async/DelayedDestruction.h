@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ class DelayedDestruction : public DelayedDestructionBase {
     if (getDestructorGuardCount() != 0) {
       destroyPending_ = true;
     } else {
-      onDestroy_(false);
+      onDelayedDestroy(false);
     }
   }
 
@@ -98,15 +98,6 @@ class DelayedDestruction : public DelayedDestructionBase {
 
   DelayedDestruction()
     : destroyPending_(false) {
-
-    onDestroy_ = [this] (bool delayed) {
-      // check if it is ok to destroy now
-      if (delayed && !destroyPending_) {
-        return;
-      }
-      destroyPending_ = false;
-      delete this;
-    };
   }
 
  private:
@@ -118,5 +109,14 @@ class DelayedDestruction : public DelayedDestructionBase {
    * guardCount_ drops to 0.
    */
   bool destroyPending_;
+
+  void onDelayedDestroy(bool delayed) override {
+    // check if it is ok to destroy now
+    if (delayed && !destroyPending_) {
+      return;
+    }
+    destroyPending_ = false;
+    delete this;
+  }
 };
 } // folly

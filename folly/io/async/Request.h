@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements. See the NOTICE file
@@ -23,8 +23,8 @@
 #include <map>
 #include <memory>
 #include <glog/logging.h>
-#include <folly/ThreadLocal.h>
 #include <folly/RWSpinLock.h>
+#include <folly/SingletonThreadLocal.h>
 
 namespace folly {
 
@@ -76,6 +76,20 @@ class RequestContext {
     }
   }
 
+  // Unlike setContextData, this method does not panic if the key is already
+  // present. Returns true iff the new value has been inserted.
+  bool setContextDataIfAbsent(const std::string& val,
+                              std::unique_ptr<RequestData> data) {
+    folly::RWSpinLock::UpgradedHolder guard(lock);
+    if (data_.find(val) != data_.end()) {
+      return false;
+    }
+
+    folly::RWSpinLock::WriteHolder writeGuard(std::move(guard));
+    data_[val] = std::move(data);
+    return true;
+  }
+
   bool hasContextData(const std::string& val) {
     folly::RWSpinLock::ReadHolder guard(lock);
     return data_.find(val) != data_.end();
@@ -97,12 +111,15 @@ class RequestContext {
   }
 
   // The following API is used to pass the context through queues / threads.
-  // saveContext is called to geta shared_ptr to the context, and
+  // saveContext is called to get a shared_ptr to the context, and
   // setContext is used to reset it on the other side of the queue.
+  //
+  // Whenever possible, use RequestContextScopeGuard instead of setContext
+  // to make sure that RequestContext is reset to the original value when
+  // we exit the scope.
   //
   // A shared_ptr is used, because many request may fan out across
   // multiple threads, or do post-send processing, etc.
-
   static std::shared_ptr<RequestContext>
   setContext(std::shared_ptr<RequestContext> ctx) {
     using std::swap;
@@ -115,19 +132,30 @@ class RequestContext {
   }
 
  private:
-  // Used to solve static destruction ordering issue.  Any static object
-  // that uses RequestContext must call this function in its constructor.
-  //
-  // See below link for more details.
-  // http://stackoverflow.com/questions/335369/
-  // finding-c-static-initialization-order-problems#335746
-  static std::shared_ptr<RequestContext> &getStaticContext() {
-    static folly::ThreadLocal<std::shared_ptr<RequestContext> > context;
-    return *context;
-  }
+  static std::shared_ptr<RequestContext>& getStaticContext();
 
   folly::RWSpinLock lock;
   std::map<std::string, std::unique_ptr<RequestData>> data_;
 };
 
+class RequestContextScopeGuard {
+ private:
+  std::shared_ptr<RequestContext> prev_;
+
+ public:
+  // Create a new RequestContext and reset to the original value when
+  // this goes out of scope.
+  RequestContextScopeGuard() : prev_(RequestContext::saveContext()) {
+    RequestContext::create();
+  }
+
+  // Set a RequestContext that was previously captured by saveContext(). It will
+  // be automatically reset to the original value when this goes out of scope.
+  explicit RequestContextScopeGuard(std::shared_ptr<RequestContext> ctx)
+      : prev_(RequestContext::setContext(std::move(ctx))) {}
+
+  ~RequestContextScopeGuard() {
+    RequestContext::setContext(std::move(prev_));
+  }
+};
 }

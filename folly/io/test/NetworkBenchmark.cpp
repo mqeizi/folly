@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-#include <folly/io/IOBuf.h>
+#include <vector>
 
-#include <gflags/gflags.h>
 #include <folly/Benchmark.h>
 #include <folly/io/Cursor.h>
-
-#include <vector>
+#include <folly/io/IOBuf.h>
+#include <folly/portability/GFlags.h>
 
 using folly::IOBuf;
 using std::unique_ptr;

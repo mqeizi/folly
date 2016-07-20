@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_BASE_HASH_H_
-#define FOLLY_BASE_HASH_H_
+#pragma once
 
 #include <cstdint>
 #include <cstring>
@@ -25,6 +24,7 @@
 #include <utility>
 
 #include <folly/ApplyTuple.h>
+#include <folly/Bits.h>
 #include <folly/SpookyHashV1.h>
 #include <folly/SpookyHashV2.h>
 
@@ -277,11 +277,11 @@ inline uint64_t fnv64(const std::string& str,
  * Paul Hsieh: http://www.azillionmonkeys.com/qed/hash.html
  */
 
-#define get16bits(d) (*((const uint16_t*) (d)))
+#define get16bits(d) folly::loadUnaligned<uint16_t>(d)
 
 inline uint32_t hsieh_hash32_buf(const void* buf, size_t len) {
   // forcing signed char, since other platforms can use unsigned
-  const signed char* s = reinterpret_cast<const signed char*>(buf);
+  const unsigned char* s = reinterpret_cast<const unsigned char*>(buf);
   uint32_t hash = static_cast<uint32_t>(len);
   uint32_t tmp;
   size_t rem;
@@ -459,5 +459,3 @@ namespace std {
     }
   };
 } // namespace std
-
-#endif

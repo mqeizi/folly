@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,17 @@
  */
 
 #include <folly/test/DeterministicSchedule.h>
+
+#include <assert.h>
+
 #include <algorithm>
 #include <list>
 #include <mutex>
 #include <random>
-#include <utility>
 #include <unordered_map>
-#include <assert.h>
+#include <utility>
+
+#include <folly/Random.h>
 
 namespace folly {
 namespace test {
@@ -91,9 +95,10 @@ struct UniformSubset {
 
   void adjustPermSize(size_t numActive) {
     if (perm_.size() > numActive) {
-      perm_.erase(std::remove_if(perm_.begin(), perm_.end(), [=](size_t x) {
-        return x >= numActive;
-      }), perm_.end());
+      perm_.erase(std::remove_if(perm_.begin(),
+                                 perm_.end(),
+                                 [=](size_t x) { return x >= numActive; }),
+                  perm_.end());
     } else {
       while (perm_.size() < numActive) {
         perm_.push_back(perm_.size());
@@ -136,10 +141,12 @@ int DeterministicSchedule::getRandNumber(int n) {
   if (tls_sched) {
     return tls_sched->scheduler_(n);
   }
-  return std::rand() % n;
+  return Random::rand32() % n;
 }
 
-int DeterministicSchedule::getcpu(unsigned* cpu, unsigned* node, void* unused) {
+int DeterministicSchedule::getcpu(unsigned* cpu,
+                                  unsigned* node,
+                                  void* /* unused */) {
   if (!tls_threadId && tls_sched) {
     beforeSharedAccess();
     tls_threadId = tls_sched->nextThreadId_++;
@@ -295,18 +302,18 @@ FutexResult Futex<DeterministicAtomic>::futexWaitImpl(
 
   char const* resultStr = "?";
   switch (result) {
-  case FutexResult::AWOKEN:
-    resultStr = "AWOKEN";
-    break;
-  case FutexResult::TIMEDOUT:
-    resultStr = "TIMEDOUT";
-    break;
-  case FutexResult::INTERRUPTED:
-    resultStr = "INTERRUPTED";
-    break;
-  case FutexResult::VALUE_CHANGED:
-    resultStr = "VALUE_CHANGED";
-    break;
+    case FutexResult::AWOKEN:
+      resultStr = "AWOKEN";
+      break;
+    case FutexResult::TIMEDOUT:
+      resultStr = "TIMEDOUT";
+      break;
+    case FutexResult::INTERRUPTED:
+      resultStr = "INTERRUPTED";
+      break;
+    case FutexResult::VALUE_CHANGED:
+      resultStr = "VALUE_CHANGED";
+      break;
   }
   FOLLY_TEST_DSCHED_VLOG(this << ".futexWait(" << std::hex << expected
                               << ", .., " << std::hex << waitMask << ") -> "
@@ -349,22 +356,7 @@ CacheLocality const& CacheLocality::system<test::DeterministicAtomic>() {
 }
 
 template <>
-const AccessSpreader<test::DeterministicAtomic>
-    AccessSpreader<test::DeterministicAtomic>::stripeByCore(
-        CacheLocality::system<>().numCachesByLevel.front());
-
-template <>
-const AccessSpreader<test::DeterministicAtomic>
-    AccessSpreader<test::DeterministicAtomic>::stripeByChip(
-        CacheLocality::system<>().numCachesByLevel.back());
-
-template <>
-AccessSpreaderArray<test::DeterministicAtomic, 128>
-    AccessSpreaderArray<test::DeterministicAtomic, 128>::sharedInstance = {};
-
-template <>
-Getcpu::Func AccessSpreader<test::DeterministicAtomic>::pickGetcpuFunc(
-    size_t numStripes) {
+Getcpu::Func AccessSpreader<test::DeterministicAtomic>::pickGetcpuFunc() {
   return &DeterministicSchedule::getcpu;
 }
 }

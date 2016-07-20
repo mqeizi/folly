@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +15,19 @@
  */
 // Copyright 2013-present Facebook. All Rights Reserved.
 
-#include <gflags/gflags.h>
-#include <glog/logging.h>
-#include <gtest/gtest.h>
-
-#include <string>
-#include <list>
-
-#include <folly/Range.h>
 #include <folly/experimental/StringKeyedMap.h>
 #include <folly/experimental/StringKeyedSet.h>
 #include <folly/experimental/StringKeyedUnorderedMap.h>
 #include <folly/experimental/StringKeyedUnorderedSet.h>
+
+#include <list>
+#include <string>
+
+#include <glog/logging.h>
+#include <gtest/gtest.h>
+
+#include <folly/Range.h>
+#include <folly/portability/GFlags.h>
 
 using folly::StringKeyedMap;
 using folly::StringKeyedSetBase;

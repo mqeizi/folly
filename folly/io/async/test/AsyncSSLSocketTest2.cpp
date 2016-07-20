@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,8 +81,8 @@ class AttachDetachClient : public AsyncSocket::ConnectCallback,
     cerr << "client write success" << endl;
   }
 
-  void writeErr(size_t bytesWritten, const AsyncSocketException& ex)
-    noexcept override {
+  void writeErr(size_t /* bytesWritten */,
+                const AsyncSocketException& ex) noexcept override {
     cerr << "client writeError: " << ex.what() << endl;
   }
 

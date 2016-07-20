@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_EXPERIMENTAL_CODING_TEST_UTILS_H
-#define FOLLY_EXPERIMENTAL_CODING_TEST_UTILS_H
+#pragma once
 
 #include <algorithm>
 #include <fstream>
@@ -302,8 +301,10 @@ void bmNext(const List& list, const std::vector<uint32_t>& data, size_t iters) {
 }
 
 template <class Reader, class List>
-void bmSkip(const List& list, const std::vector<uint32_t>& data,
-            size_t logAvgSkip, size_t iters) {
+void bmSkip(const List& list,
+            const std::vector<uint32_t>& /* data */,
+            size_t logAvgSkip,
+            size_t iters) {
   size_t avg = (size_t(1) << logAvgSkip);
   size_t base = avg - (avg >> 2);
   size_t mask = (avg > 1) ? (avg >> 1) - 1 : 0;
@@ -369,5 +370,3 @@ void bmJumpTo(const List& list, const std::vector<uint32_t>& data,
 }
 
 }}  // namespaces
-
-#endif  // FOLLY_EXPERIMENTAL_CODING_TEST_UTILS_H

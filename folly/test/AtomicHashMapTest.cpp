@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,17 +18,21 @@
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <sys/time.h>
 #include <thread>
 #include <atomic>
 #include <memory>
+
+#include <folly/Assume.h>
 #include <folly/Benchmark.h>
 #include <folly/Conv.h>
+#include <folly/portability/Atomic.h>
+#include <folly/portability/SysTime.h>
 
 using std::vector;
 using std::string;
 using folly::AtomicHashMap;
 using folly::AtomicHashArray;
+using folly::StringPiece;
 
 // Tunables:
 DEFINE_double(targetLoadFactor, 0.75, "Target memory utilization fraction.");
@@ -113,11 +117,74 @@ static int genVal(int key) {
   return key / 3;
 }
 
+static bool legalKey(const char* a);
+
+struct EqTraits {
+  bool operator()(const char* a, const char* b) {
+    return legalKey(a) && (strcmp(a, b) == 0);
+  }
+  bool operator()(const char* a, const char& b) {
+    return legalKey(a) && (a[0] != '\0') && (a[0] == b);
+  }
+  bool operator()(const char* a, const StringPiece b) {
+    return legalKey(a) &&
+      (strlen(a) == b.size()) && (strcmp(a, b.begin()) == 0);
+  }
+};
+
+struct HashTraits {
+  size_t operator()(const char* a) {
+    size_t result = 0;
+    while (a[0] != 0) result += static_cast<size_t>(*(a++));
+    return result;
+  }
+  size_t operator()(const char& a) {
+    return static_cast<size_t>(a);
+  }
+  size_t operator()(const StringPiece a) {
+    size_t result = 0;
+    for (const auto& ch : a) result += static_cast<size_t>(ch);
+    return result;
+  }
+};
+
+typedef AtomicHashMap<const char*, int64_t, HashTraits, EqTraits> AHMCstrInt;
+AHMCstrInt::Config cstrIntCfg;
+
+static bool legalKey(const char* a) {
+  return a != cstrIntCfg.emptyKey &&
+    a != cstrIntCfg.lockedKey &&
+    a != cstrIntCfg.erasedKey;
+}
+
+TEST(Ahm, BasicLookup) {
+  AHMCstrInt myMap(1024, cstrIntCfg);
+  EXPECT_TRUE(myMap.begin() == myMap.end());
+  myMap.insert(std::make_pair("f", 42));
+  EXPECT_EQ(42, myMap.find("f")->second);
+  {
+    // Look up a single char, successfully.
+    auto it = myMap.find<char>('f');
+    EXPECT_EQ(42, it->second);
+  }
+  {
+    // Look up a single char, unsuccessfully.
+    auto it = myMap.find<char>('g');
+    EXPECT_TRUE(it == myMap.end());
+  }
+  {
+    // Look up a string piece, successfully.
+    const StringPiece piece("f");
+    auto it = myMap.find(piece);
+    EXPECT_EQ(42, it->second);
+  }
+}
+
 TEST(Ahm, grow) {
   VLOG(1) << "Overhead: " << sizeof(AHArrayT) << " (array) " <<
     sizeof(AHMapT) + sizeof(AHArrayT) << " (map/set) Bytes.";
   uint64_t numEntries = 10000;
-  float sizeFactor = 0.46;
+  float sizeFactor = 0.46f;
 
   std::unique_ptr<AHMapT> m(new AHMapT(int(numEntries * sizeFactor), config));
 
@@ -177,7 +244,7 @@ TEST(Ahm, grow) {
 
 TEST(Ahm, iterator) {
   int numEntries = 10000;
-  float sizeFactor = .46;
+  float sizeFactor = .46f;
   std::unique_ptr<AHMapT> m(new AHMapT(int(numEntries * sizeFactor), config));
 
   // load map - make sure we succeed and the index is accurate
@@ -283,7 +350,7 @@ TEST(Ahm, map_exception_safety) {
   typedef AtomicHashMap<KeyT,Integer> MyMapT;
 
   int numEntries = 10000;
-  float sizeFactor = 0.46;
+  float sizeFactor = 0.46f;
   std::unique_ptr<MyMapT> m(new MyMapT(int(numEntries * sizeFactor)));
 
   bool success = true;
@@ -406,7 +473,7 @@ TEST(Ahm, collision_test) {
   // Doing the same number on each thread so we collide.
   numOpsPerThread = numInserts;
 
-  float sizeFactor = 0.46;
+  float sizeFactor = 0.46f;
   int entrySize = sizeof(KeyT) + sizeof(ValueT);
   VLOG(1) << "Testing " << numInserts << " unique " << entrySize <<
     " Byte entries replicated in " << FLAGS_numThreads <<
@@ -604,7 +671,7 @@ TEST(Ahm, thread_erase_insert_race) {
 typedef AtomicHashArray<int32_t, int32_t> AHA;
 AHA::Config configRace;
 auto atomicHashArrayInsertRaceArray = AHA::create(2, configRace);
-void* atomicHashArrayInsertRaceThread(void* j) {
+void* atomicHashArrayInsertRaceThread(void* /* j */) {
   AHA* arr = atomicHashArrayInsertRaceArray.get();
   uintptr_t numInserted = 0;
   while (!runThreadsCreatedAllThreads.load());
@@ -614,16 +681,18 @@ void* atomicHashArrayInsertRaceThread(void* j) {
     }
   }
   pthread_exit((void *) numInserted);
+  folly::assume(false);
 }
 TEST(Ahm, atomic_hash_array_insert_race) {
   AHA* arr = atomicHashArrayInsertRaceArray.get();
-  int numIterations = 5000, FLAGS_numThreads = 4;
-  void* statuses[FLAGS_numThreads];
+  int numIterations = 5000;
+  constexpr int numThreads = 4;
+  void* statuses[numThreads];
   for (int i = 0; i < numIterations; i++) {
     arr->clear();
-    runThreads(atomicHashArrayInsertRaceThread, FLAGS_numThreads, statuses);
+    runThreads(atomicHashArrayInsertRaceThread, numThreads, statuses);
     EXPECT_GE(arr->size(), 1);
-    for (int j = 0; j < FLAGS_numThreads; j++) {
+    for (int j = 0; j < numThreads; j++) {
       EXPECT_EQ(arr->size(), uintptr_t(statuses[j]));
     }
   }
@@ -665,6 +734,34 @@ TEST(Ahm, erase_find_race) {
 
   read_thread.join();
   write_thread.join();
+}
+
+// Erase right after insert race bug repro (t9130653)
+TEST(Ahm, erase_after_insert_race) {
+  const uint64_t limit = 10000;
+  const size_t num_threads = 100;
+  const size_t num_iters = 500;
+  AtomicHashMap<uint64_t, uint64_t> map(limit + 10);
+
+  std::atomic<bool> go{false};
+  std::vector<std::thread> ts;
+  for (size_t i = 0; i < num_threads; ++i) {
+    ts.emplace_back([&]() {
+        while (!go) {
+          continue;
+        }
+        for (size_t n = 0; n < num_iters; ++n) {
+          map.erase(1);
+          map.insert(1, 1);
+        }
+      });
+  }
+
+  go = true;
+
+  for (auto& t : ts) {
+    t.join();
+  }
 }
 
 // Repro for a bug when iterator didn't skip empty submaps.

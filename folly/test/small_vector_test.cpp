@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,9 +71,7 @@ struct NontrivialType {
     ++ctored;
   }
 
-  NontrivialType(NontrivialType const& s) {
-    ++ctored;
-  }
+  NontrivialType(NontrivialType const& /* s */) { ++ctored; }
 
   NontrivialType& operator=(NontrivialType const& o) {
     a = o.a;
@@ -116,7 +114,7 @@ struct Thrower {
     --alive;
   }
 
-  Thrower& operator=(Thrower const& other) {
+  Thrower& operator=(Thrower const& /* other */) {
     EXPECT_EQ(magic, kMagic);
     MaybeThrow();
     return *this;
@@ -663,7 +661,7 @@ TEST(small_vector, Capacity) {
 
   // Test capacity heapifying logic
   folly::small_vector<unsigned char, 1> vec3;
-  const size_t hc_size = 1000000;
+  const size_t hc_size = 100000;
   for (size_t i = 0; i < hc_size; ++i) {
     auto v = (unsigned char)i;
     vec3.push_back(v);

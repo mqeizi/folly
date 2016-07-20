@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_IO_COMPRESSION_H_
-#define FOLLY_IO_COMPRESSION_H_
+#pragma once
 
 #include <cstdint>
 #include <limits>
@@ -80,7 +79,14 @@ enum class CodecType {
    */
   ZSTD_BETA = 8,
 
-  NUM_CODEC_TYPES = 9,
+  /**
+   * Use gzip compression.  This is the same compression algorithm as ZLIB but
+   * gzip-compressed files tend to be easier to work with from the command line.
+   * Levels supported: 0 = no compression, 1 = fast, ..., 9 = best; default = 6
+   */
+  GZIP = 9,
+
+  NUM_CODEC_TYPES = 10,
 };
 
 class Codec {
@@ -173,5 +179,3 @@ std::unique_ptr<Codec> getCodec(CodecType type,
                                 int level = COMPRESSION_LEVEL_DEFAULT);
 
 }}  // namespaces
-
-#endif /* FOLLY_IO_COMPRESSION_H_ */

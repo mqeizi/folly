@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_BATON_H
-#define FOLLY_BATON_H
+#pragma once
 
 #include <stdint.h>
 #include <atomic>
@@ -24,6 +23,7 @@
 
 #include <folly/detail/Futex.h>
 #include <folly/detail/MemoryIdler.h>
+#include <folly/portability/Asm.h>
 
 namespace folly {
 
@@ -217,6 +217,13 @@ struct Baton {
     }
   }
 
+  /// Similar to timed_wait, but with a duration.
+  template <typename Clock = std::chrono::steady_clock, typename Duration>
+  bool timed_wait(const Duration& duration) {
+    auto deadline = Clock::now() + duration;
+    return timed_wait(deadline);
+  }
+
   /// Similar to wait, but doesn't block the thread if it hasn't been posted.
   ///
   /// try_wait has the following semantics:
@@ -289,5 +296,3 @@ struct Baton {
 };
 
 } // namespace folly
-
-#endif

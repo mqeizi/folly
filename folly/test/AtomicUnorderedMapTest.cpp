@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/AtomicUnorderedMap.h>
-#include <folly/test/DeterministicSchedule.h>
-#include <thread>
+
 #include <semaphore.h>
-#include <gflags/gflags.h>
-#include <gtest/gtest.h>
-#include <folly/Benchmark.h>
+#include <thread>
 #include <unordered_map>
+
+#include <gtest/gtest.h>
+
+#include <folly/Benchmark.h>
+#include <folly/portability/GFlags.h>
+#include <folly/test/DeterministicSchedule.h>
 
 using namespace folly;
 using namespace folly::test;
@@ -35,27 +39,30 @@ struct non_atomic {
 
   T operator+=(T arg) { value += arg; return load();}
 
-  T load(std::memory_order order= std::memory_order_seq_cst) const {
+  T load(std::memory_order /* order */ = std::memory_order_seq_cst) const {
     return value;
   }
 
   /* implicit */
   operator T() const {return load();}
 
-  void store(T desired, std::memory_order order = std::memory_order_seq_cst) {
+  void store(T desired,
+             std::memory_order /* order */ = std::memory_order_seq_cst) {
     value = desired;
   }
 
-  T exchange(T desired, std::memory_order order = std::memory_order_seq_cst) {
+  T exchange(T desired,
+             std::memory_order /* order */ = std::memory_order_seq_cst) {
     T old = load();
     store(desired);
     return old;
   }
 
   bool compare_exchange_weak(
-      T& expected, T desired,
-      std::memory_order success = std::memory_order_seq_cst,
-      std::memory_order failure = std::memory_order_seq_cst) {
+      T& expected,
+      T desired,
+      std::memory_order /* success */ = std::memory_order_seq_cst,
+      std::memory_order /* failure */ = std::memory_order_seq_cst) {
     if (value == expected) {
       value = desired;
       return true;
@@ -66,9 +73,10 @@ struct non_atomic {
   }
 
   bool compare_exchange_strong(
-      T& expected, T desired,
-      std::memory_order success = std::memory_order_seq_cst,
-      std::memory_order failure = std::memory_order_seq_cst) {
+      T& expected,
+      T desired,
+      std::memory_order /* success */ = std::memory_order_seq_cst,
+      std::memory_order /* failure */ = std::memory_order_seq_cst) {
     if (value == expected) {
       value = desired;
       return true;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
+#endif
 
 #include <folly/io/async/test/TimeUtil.h>
 
 #include <folly/Conv.h>
+#include <folly/portability/SysSyscall.h>
+#include <folly/portability/Unistd.h>
 
 #include <chrono>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <errno.h>
 #include <glog/logging.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdexcept>
 
@@ -40,7 +42,7 @@ namespace folly {
  * glibc doesn't provide gettid(), so define it ourselves.
  */
 static pid_t gettid() {
-  return syscall(SYS_gettid);
+  return syscall(FOLLY_SYS_gettid);
 }
 
 /**

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_MEMORY_H_
-#define FOLLY_MEMORY_H_
+#pragma once
 
 #include <folly/Traits.h>
+#include <folly/portability/Memory.h>
 
 #include <cstddef>
 #include <cstdlib>
@@ -37,8 +37,9 @@ namespace folly {
  * @author Xu Ning (xning@fb.com)
  */
 
-#if __cplusplus >= 201402L || \
-    defined __cpp_lib_make_unique && __cpp_lib_make_unique >= 201304L
+#if __cplusplus >= 201402L ||                                              \
+    (defined __cpp_lib_make_unique && __cpp_lib_make_unique >= 201304L) || \
+    (defined(_MSC_VER) && _MSC_VER >= 1900)
 
 /* using override */ using std::make_unique;
 
@@ -202,13 +203,11 @@ class StlAllocator {
   template <class U> StlAllocator(const StlAllocator<Alloc, U>& other)
     : alloc_(other.alloc()) { }
 
-  T* allocate(size_t n, const void* hint = nullptr) {
+  T* allocate(size_t n, const void* /* hint */ = nullptr) {
     return static_cast<T*>(alloc_->allocate(n * sizeof(T)));
   }
 
-  void deallocate(T* p, size_t n) {
-    alloc_->deallocate(p);
-  }
+  void deallocate(T* p, size_t /* n */) { alloc_->deallocate(p); }
 
   size_t max_size() const {
     return std::numeric_limits<size_t>::max();
@@ -419,5 +418,3 @@ std::shared_ptr<T> allocate_shared(Allocator&& allocator, Args&&... args) {
 template <class T> struct IsArenaAllocator : std::false_type { };
 
 }  // namespace folly
-
-#endif /* FOLLY_MEMORY_H_ */

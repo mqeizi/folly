@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -397,7 +397,9 @@ static void printBenchmarkResultsAsTable(
     s.resize(columns - 29, ' ');
     auto nsPerIter = get<2>(datum);
     auto secPerIter = nsPerIter / 1E9;
-    auto itersPerSec = 1 / secPerIter;
+    auto itersPerSec = (secPerIter == 0)
+                           ? std::numeric_limits<double>::infinity()
+                           : (1 / secPerIter);
     if (!useBaseline) {
       // Print without baseline
       printf("%*s           %9s  %7s\n",

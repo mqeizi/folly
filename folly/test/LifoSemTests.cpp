@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,17 @@
  */
 
 #include <folly/LifoSem.h>
-#include <folly/test/DeterministicSchedule.h>
 
-#include <thread>
 #include <semaphore.h>
-#include <gflags/gflags.h>
+#include <thread>
+
 #include <gtest/gtest.h>
 
 #include <folly/Benchmark.h>
 #include <folly/Random.h>
+#include <folly/portability/Asm.h>
+#include <folly/portability/GFlags.h>
+#include <folly/test/DeterministicSchedule.h>
 
 using namespace folly;
 using namespace folly::test;
@@ -318,7 +320,7 @@ BENCHMARK(single_thread_lifo_post, iters) {
   LifoSem sem;
   for (size_t n = 0; n < iters; ++n) {
     sem.post();
-    asm volatile ("":::"memory");
+    asm_volatile_memory();
   }
 }
 
@@ -326,7 +328,7 @@ BENCHMARK(single_thread_lifo_wait, iters) {
   LifoSem sem(iters);
   for (size_t n = 0; n < iters; ++n) {
     sem.wait();
-    asm volatile ("":::"memory");
+    asm_volatile_memory();
   }
 }
 
@@ -334,9 +336,9 @@ BENCHMARK(single_thread_lifo_postwait, iters) {
   LifoSem sem;
   for (size_t n = 0; n < iters; ++n) {
     sem.post();
-    asm volatile ("":::"memory");
+    asm_volatile_memory();
     sem.wait();
-    asm volatile ("":::"memory");
+    asm_volatile_memory();
   }
 }
 
@@ -344,7 +346,7 @@ BENCHMARK(single_thread_lifo_trywait, iters) {
   LifoSem sem;
   for (size_t n = 0; n < iters; ++n) {
     EXPECT_FALSE(sem.tryWait());
-    asm volatile ("":::"memory");
+    asm_volatile_memory();
   }
 }
 
@@ -367,7 +369,7 @@ BENCHMARK(single_thread_posix_trywait, iters) {
   EXPECT_EQ(sem_destroy(&sem), 0);
 }
 
-static void contendedUse(uint n, int posters, int waiters) {
+static void contendedUse(uint32_t n, int posters, int waiters) {
   LifoSemImpl<std::atomic> sem;
 
   std::vector<std::thread> threads;
@@ -376,7 +378,7 @@ static void contendedUse(uint n, int posters, int waiters) {
   BENCHMARK_SUSPEND {
     for (int t = 0; t < waiters; ++t) {
       threads.emplace_back([=,&sem] {
-        for (uint i = t; i < n; i += waiters) {
+        for (uint32_t i = t; i < n; i += waiters) {
           sem.wait();
         }
       });
@@ -386,7 +388,7 @@ static void contendedUse(uint n, int posters, int waiters) {
         while (!go.load()) {
           std::this_thread::yield();
         }
-        for (uint i = t; i < n; i += posters) {
+        for (uint32_t i = t; i < n; i += posters) {
           sem.post();
         }
       });

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,6 +92,21 @@ namespace folly {
     void advanceTo(TimePoint const& t);
 
     TimePoint now() override { return now_; }
+
+    /// Flush the function queue. Destroys all stored functions without
+    /// executing them. Returns number of removed functions.
+    std::size_t clear() {
+      std::queue<Func> funcs;
+      std::priority_queue<ScheduledFunc> scheduled_funcs;
+
+      {
+        std::lock_guard<std::mutex> lock(lock_);
+        funcs_.swap(funcs);
+        scheduledFuncs_.swap(scheduled_funcs);
+      }
+
+      return funcs.size() + scheduled_funcs.size();
+    }
 
    private:
     std::mutex lock_;

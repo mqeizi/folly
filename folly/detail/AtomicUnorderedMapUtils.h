@@ -2,8 +2,9 @@
 
 #include <atomic>
 #include <stdint.h>
-#include <sys/mman.h>
-#include <unistd.h>
+
+#include <folly/portability/SysMman.h>
+#include <folly/portability/Unistd.h>
 
 namespace folly { namespace detail {
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,29 @@
 #include <folly/Singleton.h>
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <string>
 
+#include <folly/FileUtil.h>
 #include <folly/ScopeGuard.h>
 
 namespace folly {
 
 namespace detail {
 
-constexpr std::chrono::seconds SingletonHolderBase::kDestroyWaitTime;
-
+[[noreturn]] void singletonWarnDoubleRegistrationAndAbort(
+    const TypeDescriptor& type) {
+  // Not using LOG(FATAL) or std::cerr because they may not be initialized yet.
+  std::ostringstream o;
+  o << "Double registration of singletons of the same "
+    << "underlying type; check for multiple definitions "
+    << "of type folly::Singleton<" << type.name() << ">" << std::endl;
+  auto s = o.str();
+  writeFull(STDERR_FILENO, s.data(), s.size());
+  std::abort();
+}
 }
 
 namespace {
@@ -65,8 +78,7 @@ void SingletonVault::registerSingleton(detail::SingletonHolderBase* entry) {
   stateCheck(SingletonVaultState::Running);
 
   if (UNLIKELY(registrationComplete_)) {
-    throw std::logic_error(
-      "Registering singleton after registrationComplete().");
+    LOG(ERROR) << "Registering singleton after registrationComplete().";
   }
 
   RWSpinLock::ReadHolder rhMutex(&mutex_);
@@ -83,8 +95,7 @@ void SingletonVault::addEagerInitSingleton(detail::SingletonHolderBase* entry) {
   stateCheck(SingletonVaultState::Running);
 
   if (UNLIKELY(registrationComplete_)) {
-    throw std::logic_error(
-        "Registering for eager-load after registrationComplete().");
+    LOG(ERROR) << "Registering for eager-load after registrationComplete().";
   }
 
   RWSpinLock::ReadHolder rhMutex(&mutex_);
@@ -96,7 +107,6 @@ void SingletonVault::addEagerInitSingleton(detail::SingletonHolderBase* entry) {
 }
 
 void SingletonVault::registrationComplete() {
-  RequestContext::saveContext();
   std::atexit([](){ SingletonVault::singleton()->destroyInstances(); });
 
   RWSpinLock::WriteHolder wh(&stateMutex_);
@@ -214,7 +224,9 @@ void SingletonVault::reenableInstances() {
 }
 
 void SingletonVault::scheduleDestroyInstances() {
-  RequestContext::saveContext();
+  // Add a dependency on folly::ThreadLocal to make sure all its static
+  // singletons are initalized first.
+  threadlocal_detail::StaticMeta<void>::instance();
 
   class SingletonVaultDestructor {
    public:

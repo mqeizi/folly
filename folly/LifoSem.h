@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_LIFOSEM_H
-#define FOLLY_LIFOSEM_H
+#pragma once
 
 #include <string.h>
 #include <stdint.h>
@@ -323,7 +322,7 @@ struct LifoSemBase {
 
   /// Constructor
   constexpr explicit LifoSemBase(uint32_t initialValue = 0)
-    : head_(LifoSemHead::fresh(initialValue)) {}
+      : head_(LifoSemHead::fresh(initialValue)), padding_() {}
 
   LifoSemBase(LifoSemBase const&) = delete;
   LifoSemBase& operator=(LifoSemBase const&) = delete;
@@ -605,5 +604,3 @@ struct LifoSemImpl : public detail::LifoSemBase<BatonType, Atom> {
 };
 
 } // namespace folly
-
-#endif

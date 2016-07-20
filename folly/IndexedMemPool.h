@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_INDEXEDMEMPOOL_H
-#define FOLLY_INDEXEDMEMPOOL_H
+#pragma once
 
 #include <type_traits>
 #include <stdint.h>
 #include <assert.h>
-#include <unistd.h>
-#include <sys/mman.h>
 #include <boost/noncopyable.hpp>
 #include <folly/AtomicStruct.h>
 #include <folly/detail/CacheLocality.h>
+#include <folly/portability/SysMman.h>
+#include <folly/portability/Unistd.h>
 
 // Ignore shadowing warnings within this file, so includers can use -Wshadow.
 #pragma GCC diagnostic push
@@ -466,4 +465,3 @@ struct IndexedMemPoolRecycler {
 } // namespace folly
 
 # pragma GCC diagnostic pop
-#endif

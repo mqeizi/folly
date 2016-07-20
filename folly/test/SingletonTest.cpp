@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,13 @@
 #include <thread>
 
 #include <folly/Singleton.h>
+#include <folly/Subprocess.h>
+#include <folly/experimental/io/FsUtil.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/test/SingletonTestStructs.h>
-#include <folly/Benchmark.h>
 
 #include <glog/logging.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <boost/thread/barrier.hpp>
 
@@ -60,6 +62,7 @@ TEST(Singleton, BasicUsage) {
     EXPECT_NE(s2, nullptr);
 
     EXPECT_EQ(s1, s2);
+    EXPECT_EQ(s1.get(), SingletonBasicUsage<Watchdog>::try_get_fast().get());
 
     std::shared_ptr<ChildWatchdog> s3 =
       SingletonBasicUsage<ChildWatchdog>::try_get();
@@ -391,10 +394,10 @@ TEST(Singleton, SingletonCreationError) {
   SingletonCreationError<ErrorConstructor> error_once_singleton;
 
   // first time should error out
-  EXPECT_THROW(error_once_singleton.get_weak().lock(), std::runtime_error);
+  EXPECT_THROW(error_once_singleton.try_get(), std::runtime_error);
 
   // second time it'll work fine
-  error_once_singleton.get_weak().lock();
+  error_once_singleton.try_get();
   SUCCEED();
 }
 
@@ -409,7 +412,7 @@ TEST(Singleton, SingletonConcurrencyStress) {
   std::vector<std::thread> ts;
   for (size_t i = 0; i < 100; ++i) {
     ts.emplace_back([&]() {
-        slowpoke_singleton.get_weak().lock();
+        slowpoke_singleton.try_get();
       });
   }
 
@@ -554,20 +557,6 @@ TEST(Singleton, SingletonEagerInitParallel) {
   }
 }
 
-// Benchmarking a normal singleton vs a Meyers singleton vs a Folly
-// singleton.  Meyers are insanely fast, but (hopefully) Folly
-// singletons are fast "enough."
-int* getMeyersSingleton() {
-  static auto ret = new int(0);
-  return ret;
-}
-
-int normal_singleton_value = 0;
-int* getNormalSingleton() {
-  doNotOptimizeAway(&normal_singleton_value);
-  return &normal_singleton_value;
-}
-
 struct MockTag {};
 template <typename T, typename Tag = detail::DefaultTag>
 using SingletonMock = Singleton <T, Tag, MockTag>;
@@ -593,126 +582,33 @@ TEST(Singleton, MockTest) {
 
   // If serial_count value is the same, then singleton was not replaced.
   EXPECT_NE(serial_count_first, serial_count_mock);
+
+  // Override existing mock using make_mock one more time
+  SingletonMock<Watchdog>::make_mock();
+
+  EXPECT_EQ(vault.registeredSingletonCount(), 1);
+  int serial_count_mock2 = SingletonMock<Watchdog>::try_get()->serial_number;
+
+  // If serial_count value is the same, then singleton was not replaced.
+  EXPECT_NE(serial_count_first, serial_count_mock2);
+  EXPECT_NE(serial_count_mock, serial_count_mock2);
+
+  vault.destroyInstances();
 }
 
-struct BenchmarkSingleton {
-  int val = 0;
-};
-
-void run4Threads(std::function<void()> f) {
-  std::vector<std::thread> threads;
-  for (size_t i = 0; i < 4; ++ i) {
-    threads.emplace_back(f);
-  }
-  for (auto& thread : threads) {
-    thread.join();
-  }
-}
-
-void normalSingleton(size_t n) {
-  for (size_t i = 0; i < n; ++ i) {
-    doNotOptimizeAway(getNormalSingleton());
-  }
-}
-
-BENCHMARK(NormalSingleton, n) {
-  normalSingleton(n);
-}
-
-BENCHMARK(NormalSingleton4Threads, n) {
-  run4Threads([=]() {
-      normalSingleton(n);
-    });
-}
-
-void meyersSingleton(size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    doNotOptimizeAway(getMeyersSingleton());
-  }
-}
-
-
-BENCHMARK_RELATIVE(MeyersSingleton, n) {
-  meyersSingleton(n);
-}
-
-BENCHMARK_RELATIVE(MeyersSingleton4Threads, n) {
-  run4Threads([=]() {
-      meyersSingleton(n);
-    });
-}
-
-struct BenchmarkTag {};
-template <typename T, typename Tag = detail::DefaultTag>
-using SingletonBenchmark = Singleton <T, Tag, BenchmarkTag>;
-
-struct GetTag{};
-struct GetSharedTag{};
-struct GetWeakTag{};
-
-SingletonBenchmark<BenchmarkSingleton, GetTag> benchmark_singleton_get;
-SingletonBenchmark<BenchmarkSingleton, GetSharedTag>
-benchmark_singleton_get_shared;
-SingletonBenchmark<BenchmarkSingleton, GetWeakTag> benchmark_singleton_get_weak;
-
-void follySingletonRaw(size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    SingletonBenchmark<BenchmarkSingleton, GetTag>::get();
-  }
-}
-
-BENCHMARK_RELATIVE(FollySingletonRaw, n) {
-  follySingletonRaw(n);
-}
-
-BENCHMARK_RELATIVE(FollySingletonRaw4Threads, n) {
-  run4Threads([=]() {
-      follySingletonRaw(n);
-    });
-}
-
-void follySingletonSharedPtr(size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    SingletonBenchmark<BenchmarkSingleton, GetSharedTag>::try_get();
-  }
-}
-
-BENCHMARK_RELATIVE(FollySingletonSharedPtr, n) {
-  follySingletonSharedPtr(n);
-}
-
-BENCHMARK_RELATIVE(FollySingletonSharedPtr4Threads, n) {
-  run4Threads([=]() {
-      follySingletonSharedPtr(n);
-    });
-}
-
-void follySingletonWeakPtr(size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    SingletonBenchmark<BenchmarkSingleton, GetWeakTag>::get_weak();
-  }
-}
-
-BENCHMARK_RELATIVE(FollySingletonWeakPtr, n) {
-  follySingletonWeakPtr(n);
-}
-
-BENCHMARK_RELATIVE(FollySingletonWeakPtr4Threads, n) {
-  run4Threads([=]() {
-      follySingletonWeakPtr(n);
-    });
-}
-
-int main(int argc, char* argv[]) {
-  testing::InitGoogleTest(&argc, argv);
-  google::InitGoogleLogging(argv[0]);
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-  SingletonVault::singleton()->registrationComplete();
-
-  auto ret = RUN_ALL_TESTS();
-  if (!ret) {
-    folly::runBenchmarksOnFlag();
-  }
-  return ret;
+TEST(Singleton, DoubleRegistrationLogging) {
+  const auto basename = "singleton_double_registration";
+  const auto sub = fs::executable_path().remove_filename() / basename;
+  auto p = Subprocess(
+      std::vector<std::string>{sub.string()},
+      Subprocess::Options()
+          .stdin(Subprocess::CLOSE)
+          .stdout(Subprocess::CLOSE)
+          .pipeStderr()
+          .closeOtherFds());
+  auto err = p.communicate("").second;
+  auto res = p.wait();
+  EXPECT_EQ(ProcessReturnCode::KILLED, res.state());
+  EXPECT_EQ(SIGABRT, res.killSignal());
+  EXPECT_THAT(err, testing::StartsWith("Double registration of singletons"));
 }

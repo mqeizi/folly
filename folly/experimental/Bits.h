@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_EXPERIMENTAL_BITS_H_
-#define FOLLY_EXPERIMENTAL_BITS_H_
+#pragma once
 
 #include <cstddef>
 #include <type_traits>
@@ -66,7 +65,7 @@ struct BitsTraits<Unaligned<T>, typename std::enable_if<
   }
 };
 
-// Special version that allows to disable address sanitizer on demand.
+// Special version that allows one to disable address sanitizer on demand.
 template <class T>
 struct BitsTraits<UnalignedNoASan<T>, typename std::enable_if<
     (std::is_integral<T>::value)>::type> {
@@ -194,8 +193,11 @@ struct Bits {
   static constexpr UnderlyingType zero = UnderlyingType(0);
   static constexpr UnderlyingType one = UnderlyingType(1);
 
+  using UnsignedType = typename std::make_unsigned<UnderlyingType>::type;
   static constexpr UnderlyingType ones(size_t count) {
-    return count < bitsPerBlock ? (one << count) - 1 : ~zero;
+    return (count < bitsPerBlock)
+        ? static_cast<UnderlyingType>((UnsignedType{1} << count) - 1)
+        : ~zero;
   }
 };
 
@@ -225,7 +227,10 @@ inline void Bits<T, Traits>::set(T* p, size_t bitStart, size_t count,
                                  UnderlyingType value) {
   DCHECK_LE(count, sizeof(UnderlyingType) * 8);
   size_t cut = bitsPerBlock - count;
-  DCHECK_EQ(value, value << cut >> cut);
+  if (cut != 8 * sizeof(UnderlyingType)) {
+    using U = typename std::make_unsigned<UnderlyingType>::type;
+    DCHECK_EQ(value, UnderlyingType(U(value) << cut) >> cut);
+  }
   size_t idx = blockIndex(bitStart);
   size_t offset = bitOffset(bitStart);
   if (std::is_signed<UnderlyingType>::value) {
@@ -267,6 +272,10 @@ inline bool Bits<T, Traits>::test(const T* p, size_t bit) {
 template <class T, class Traits>
 inline auto Bits<T, Traits>::get(const T* p, size_t bitStart, size_t count)
   -> UnderlyingType {
+  if (count == 0) {
+    return UnderlyingType{};
+  }
+
   DCHECK_LE(count, sizeof(UnderlyingType) * 8);
   size_t idx = blockIndex(bitStart);
   size_t offset = bitOffset(bitStart);
@@ -304,5 +313,3 @@ inline size_t Bits<T, Traits>::count(const T* begin, const T* end) {
 }
 
 }  // namespace folly
-
-#endif /* FOLLY_EXPERIMENTAL_BITS_H_ */

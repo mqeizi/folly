@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,10 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_EXPERIMENTAL_EVENTCOUNT_H_
-#define FOLLY_EXPERIMENTAL_EVENTCOUNT_H_
+#pragma once
 
-#include <unistd.h>
 #include <syscall.h>
 #include <linux/futex.h>
-#include <sys/time.h>
 #include <climits>
 #include <atomic>
 #include <thread>
@@ -28,6 +25,8 @@
 
 #include <folly/Bits.h>
 #include <folly/Likely.h>
+#include <folly/portability/SysTime.h>
+#include <folly/portability/Unistd.h>
 
 
 namespace folly {
@@ -127,13 +126,7 @@ class EventCount {
   static_assert(sizeof(uint32_t) == 4, "bad platform");
   static_assert(sizeof(uint64_t) == 8, "bad platform");
 
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-  static constexpr size_t kEpochOffset = 1;
-#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  static constexpr size_t kEpochOffset = 0;  // in units of sizeof(int)
-#else
-# error Your machine uses a weird endianness!
-#endif
+  static constexpr size_t kEpochOffset = kIsLittleEndian ? 1 : 0;
 
   // val_ stores the epoch in the most significant 32 bits and the
   // waiter count in the least significant 32 bits.
@@ -210,5 +203,3 @@ void EventCount::await(Condition condition) {
 }
 
 }  // namespace folly
-
-#endif /* FOLLY_EXPERIMENTAL_EVENTCOUNT_H_ */

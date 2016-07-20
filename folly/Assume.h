@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef FOLLY_BASE_ASSUME_H_
-#define FOLLY_BASE_ASSUME_H_
+#pragma once
 
 #include <folly/Portability.h>
 #include <glog/logging.h>
@@ -39,11 +38,11 @@ FOLLY_ALWAYS_INLINE void assume(bool cond) {
   __builtin_assume(cond);
 #elif defined(__GNUC__)
   if (!cond) { __builtin_unreachable(); }
+#elif defined(_MSC_VER)
+  __assume(cond);
 #else
   // Do nothing.
 #endif
 }
 
 }  // namespace folly
-
-#endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -184,12 +184,13 @@ THOUGHTS:
 #include <cstddef>
 #include <iomanip>
 
-#include <folly/ScopeGuard.h>
-#include <folly/Conv.h>
-#include <boost/preprocessor.hpp>
-#include <boost/iterator/iterator_adaptor.hpp>
-#include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <boost/iterator/iterator_adaptor.hpp>
+#include <boost/preprocessor.hpp>
+
+#include <folly/Conv.h>
+#include <folly/ScopeGuard.h>
+#include <folly/portability/GFlags.h>
 
 using namespace std;
 using namespace folly;
@@ -590,7 +591,7 @@ struct Alloc : AllocTracker, Ticker {
 
   std::allocator<T> a;
   int id;
-  explicit Alloc(int i = 8) : a(a), id(i) {}
+  explicit Alloc(int i = 8) : a(), id(i) {}
   Alloc(const Alloc& o) : a(o.a), id(o.id) {}
   Alloc(Alloc&& o) : a(move(o.a)), id(o.id) {}
   Alloc& operator=(const Alloc&) = default;

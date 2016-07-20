@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 
 #include <chrono>
 #include <cstddef>
-#include <memory>
 #include <list>
+#include <memory>
 
 namespace folly {
 
@@ -61,7 +61,7 @@ class HHWheelTimer : private folly::AsyncTimeout,
  public:
   // This type has always been a misnomer, because it is not a unique pointer.
   using UniquePtr = std::unique_ptr<HHWheelTimer, Destructor>;
-  using SharedPtr = IntrusivePtr<HHWheelTimer>;
+  using SharedPtr = std::shared_ptr<HHWheelTimer>;
 
   template <typename... Args>
   static UniquePtr newTimer(Args&&... args) {
@@ -136,7 +136,6 @@ class HHWheelTimer : private folly::AsyncTimeout,
     void cancelTimeoutImpl();
 
     HHWheelTimer* wheel_;
-    folly::Optional<DestructorGuard> wheelGuard_;
     std::chrono::milliseconds expiration_;
 
     typedef boost::intrusive::list_member_hook<
@@ -166,22 +165,13 @@ class HHWheelTimer : private folly::AsyncTimeout,
    * interval timeouts using scheduleTimeout(callback) method.
    */
   static int DEFAULT_TICK_INTERVAL;
-  explicit HHWheelTimer(folly::EventBase* eventBase,
-                        std::chrono::milliseconds intervalMS =
-                        std::chrono::milliseconds(DEFAULT_TICK_INTERVAL),
-                        AsyncTimeout::InternalEnum internal =
-                        AsyncTimeout::InternalEnum::NORMAL,
-                        std::chrono::milliseconds defaultTimeoutMS =
-                        std::chrono::milliseconds(-1));
-
-  /**
-   * Destroy the HHWheelTimer.
-   *
-   * A HHWheelTimer should only be destroyed when there are no more
-   * callbacks pending in the set. (If it helps you may use cancelAll() to
-   * cancel all pending timeouts explicitly before calling this.)
-   */
-  virtual void destroy();
+  explicit HHWheelTimer(
+      folly::TimeoutManager* timeoutManager,
+      std::chrono::milliseconds intervalMS =
+          std::chrono::milliseconds(DEFAULT_TICK_INTERVAL),
+      AsyncTimeout::InternalEnum internal = AsyncTimeout::InternalEnum::NORMAL,
+      std::chrono::milliseconds defaultTimeoutMS =
+          std::chrono::milliseconds(-1));
 
   /**
    * Cancel all outstanding timeouts
@@ -324,7 +314,7 @@ class HHWheelTimer : private folly::AsyncTimeout,
 
   uint32_t catchupEveryN_;
   uint32_t expirationsSinceCatchup_;
-  bool processingCallbacksGuard_;
+  bool* processingCallbacksGuard_;
 };
 
 } // folly

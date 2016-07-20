@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,19 @@
 
 #pragma once
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <glog/logging.h>
+#include <folly/Optional.h>
 #include <folly/SocketAddress.h>
-#include <folly/io/ShutdownSocketSet.h>
+#include <folly/detail/SocketFastOpen.h>
 #include <folly/io/IOBuf.h>
-#include <folly/io/async/AsyncTimeout.h>
+#include <folly/io/ShutdownSocketSet.h>
 #include <folly/io/async/AsyncSocketException.h>
+#include <folly/io/async/AsyncTimeout.h>
 #include <folly/io/async/AsyncTransport.h>
-#include <folly/io/async/EventHandler.h>
 #include <folly/io/async/DelayedDestruction.h>
+#include <folly/io/async/EventHandler.h>
+#include <folly/portability/Sockets.h>
+
+#include <sys/types.h>
 
 #include <chrono>
 #include <memory>
@@ -62,6 +64,13 @@ namespace folly {
  * responding and no further progress can be made sending the data.
  */
 
+#ifdef _MSC_VER
+// We do a dynamic_cast on this, in
+// AsyncTransportWrapper::getUnderlyingTransport so be safe and
+// force displacements for it. See:
+// https://msdn.microsoft.com/en-us/library/7sf3txa8.aspx
+#pragma vtordisp(push, 2)
+#endif
 class AsyncSocket : virtual public AsyncTransportWrapper {
  public:
   typedef std::unique_ptr<AsyncSocket, Destructor> UniquePtr;
@@ -251,15 +260,19 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
    *                  does not succeed within this period,
    *                  callback->connectError() will be invoked.
    */
-  virtual void connect(ConnectCallback* callback,
-               const folly::SocketAddress& address,
-               int timeout = 0,
-               const OptionMap &options = emptyOptionMap,
-               const folly::SocketAddress& bindAddr = anyAddress()
-               ) noexcept;
-  void connect(ConnectCallback* callback, const std::string& ip, uint16_t port,
-               int timeout = 00,
-               const OptionMap &options = emptyOptionMap) noexcept;
+  virtual void connect(
+      ConnectCallback* callback,
+      const folly::SocketAddress& address,
+      int timeout = 0,
+      const OptionMap& options = emptyOptionMap,
+      const folly::SocketAddress& bindAddr = anyAddress()) noexcept;
+
+  void connect(
+      ConnectCallback* callback,
+      const std::string& ip,
+      uint16_t port,
+      int timeout = 0,
+      const OptionMap& options = emptyOptionMap) noexcept;
 
   /**
    * If a connect request is in-flight, cancels it and closes the socket
@@ -328,15 +341,12 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   ReadCallback* getReadCallback() const override;
 
   void write(WriteCallback* callback, const void* buf, size_t bytes,
-             WriteFlags flags = WriteFlags::NONE,
-             BufferCallback* bufCallback = nullptr) override;
+             WriteFlags flags = WriteFlags::NONE) override;
   void writev(WriteCallback* callback, const iovec* vec, size_t count,
-              WriteFlags flags = WriteFlags::NONE,
-              BufferCallback* bufCallback = nullptr) override;
+              WriteFlags flags = WriteFlags::NONE) override;
   void writeChain(WriteCallback* callback,
                   std::unique_ptr<folly::IOBuf>&& buf,
-                  WriteFlags flags = WriteFlags::NONE,
-                  BufferCallback* bufCallback = nullptr) override;
+                  WriteFlags flags = WriteFlags::NONE) override;
 
   class WriteRequest;
   virtual void writeRequest(WriteRequest* req);
@@ -403,6 +413,32 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
     return connectEndTime_ - connectStartTime_;
   }
 
+  std::chrono::milliseconds getConnectTimeout() const {
+    return connectTimeout_;
+  }
+
+  bool getTFOAttempted() const {
+    return tfoAttempted_;
+  }
+
+  /**
+   * Returns whether or not the attempt to use TFO
+   * finished successfully. This does not necessarily
+   * mean TFO worked, just that trying to use TFO
+   * succeeded.
+   */
+  bool getTFOFinished() const {
+    return tfoFinished_;
+  }
+
+  /**
+   * Returns whether or not TFO "worked", or, succeeded
+   * in actually being used.
+   */
+  bool getTFOSucceeded() const {
+    return tfoSucceeded_;
+  }
+
   // Methods controlling socket options
 
   /**
@@ -462,7 +498,6 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   #define SO_SET_NAMESPACE        41
   int setTCPProfile(int profd);
 
-
   /**
    * Generic API for reading a socket option.
    *
@@ -497,12 +532,61 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
     peek_ = peek;
   }
 
+  /**
+   * Enables TFO behavior on the AsyncSocket if FOLLY_ALLOW_TFO
+   * is set.
+   */
+  void enableTFO() {
+    // No-op if folly does not allow tfo
+#if FOLLY_ALLOW_TFO
+    tfoEnabled_ = true;
+#endif
+  }
+
   enum class StateEnum : uint8_t {
     UNINIT,
     CONNECTING,
     ESTABLISHED,
     CLOSED,
-    ERROR
+    ERROR,
+    FAST_OPEN,
+  };
+
+  void setBufferCallback(BufferCallback* cb);
+
+  /**
+   * writeReturn is the total number of bytes written, or WRITE_ERROR on error.
+   * If no data has been written, 0 is returned.
+   * exception is a more specific exception that cause a write error.
+   * Not all writes have exceptions associated with them thus writeReturn
+   * should be checked to determine whether the operation resulted in an error.
+   */
+  struct WriteResult {
+    explicit WriteResult(ssize_t ret) : writeReturn(ret) {}
+
+    WriteResult(ssize_t ret, std::unique_ptr<const AsyncSocketException> e)
+        : writeReturn(ret), exception(std::move(e)) {}
+
+    ssize_t writeReturn;
+    std::unique_ptr<const AsyncSocketException> exception;
+  };
+
+  /**
+   * readReturn is the number of bytes read, or READ_EOF on EOF, or
+   * READ_ERROR on error, or READ_BLOCKING if the operation will
+   * block.
+   * exception is a more specific exception that may have caused a read error.
+   * Not all read errors have exceptions associated with them thus readReturn
+   * should be checked to determine whether the operation resulted in an error.
+   */
+  struct ReadResult {
+    explicit ReadResult(ssize_t ret) : readReturn(ret) {}
+
+    ReadResult(ssize_t ret, std::unique_ptr<const AsyncSocketException> e)
+        : readReturn(ret), exception(std::move(e)) {}
+
+    ssize_t readReturn;
+    std::unique_ptr<const AsyncSocketException> exception;
   };
 
   /**
@@ -510,17 +594,14 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
    */
   class WriteRequest {
    public:
-    WriteRequest(
-        AsyncSocket* socket,
-        WriteCallback* callback,
-        BufferCallback* bufferCallback = nullptr) :
-      socket_(socket), callback_(callback), bufferCallback_(bufferCallback) {}
+    WriteRequest(AsyncSocket* socket, WriteCallback* callback) :
+      socket_(socket), callback_(callback) {}
 
     virtual void start() {};
 
     virtual void destroy() = 0;
 
-    virtual bool performWrite() = 0;
+    virtual WriteResult performWrite() = 0;
 
     virtual void consume() = 0;
 
@@ -552,10 +633,6 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
       socket_->appBytesWritten_ += count;
     }
 
-    BufferCallback* getBufferCallback() const {
-      return bufferCallback_;
-    }
-
    protected:
     // protected destructor, to ensure callers use destroy()
     virtual ~WriteRequest() {}
@@ -564,7 +641,6 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
     WriteRequest* next_{nullptr};          ///< pointer to next WriteRequest
     WriteCallback* callback_;     ///< completion callback
     uint32_t totalBytesWritten_{0};  ///< total bytes written
-    BufferCallback* bufferCallback_{nullptr};
   };
 
  protected:
@@ -573,6 +649,10 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
     READ_ERROR = -1,
     READ_BLOCKING = -2,
     READ_NO_ERROR = -3,
+  };
+
+  enum WriteResultEnum {
+    WRITE_ERROR = -1,
   };
 
   /**
@@ -679,48 +759,43 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
    * @param buf      The buffer to read data into.
    * @param buflen   The length of the buffer.
    *
-   * @return Returns the number of bytes read, or READ_EOF on EOF, or
-   * READ_ERROR on error, or READ_BLOCKING if the operation will
-   * block.
+   * @return Returns a read result. See read result for details.
    */
-  virtual ssize_t performRead(void** buf, size_t* buflen, size_t* offset);
+  virtual ReadResult performRead(void** buf, size_t* buflen, size_t* offset);
 
   /**
    * Populate an iovec array from an IOBuf and attempt to write it.
    *
-   * @param callback    Write completion/error callback.
-   * @param vec         Target iovec array; caller retains ownership.
-   * @param count       Number of IOBufs to write, beginning at start of buf.
-   * @param buf         Chain of iovecs.
-   * @param flags       set of flags for the underlying write calls, like cork
-   * @param bufCallback Callback when egress data begins to buffer
+   * @param callback Write completion/error callback.
+   * @param vec      Target iovec array; caller retains ownership.
+   * @param count    Number of IOBufs to write, beginning at start of buf.
+   * @param buf      Chain of iovecs.
+   * @param flags    set of flags for the underlying write calls, like cork
    */
   void writeChainImpl(WriteCallback* callback, iovec* vec,
                       size_t count, std::unique_ptr<folly::IOBuf>&& buf,
-                      WriteFlags flags, BufferCallback* bufCallback = nullptr);
+                      WriteFlags flags);
 
   /**
    * Write as much data as possible to the socket without blocking,
    * and queue up any leftover data to send when the socket can
    * handle writes again.
    *
-   * @param callback    The callback to invoke when the write is completed.
-   * @param vec         Array of buffers to write; this method will make a
-   *                    copy of the vector (but not the buffers themselves)
-   *                    if the write has to be completed asynchronously.
-   * @param count       Number of elements in vec.
-   * @param buf         The IOBuf that manages the buffers referenced by
-   *                    vec, or a pointer to nullptr if the buffers are not
-   *                    associated with an IOBuf.  Note that ownership of
-   *                    the IOBuf is transferred here; upon completion of
-   *                    the write, the AsyncSocket deletes the IOBuf.
-   * @param flags       Set of write flags.
-   * @param bufCallback Callback when egress data buffers up
+   * @param callback The callback to invoke when the write is completed.
+   * @param vec      Array of buffers to write; this method will make a
+   *                 copy of the vector (but not the buffers themselves)
+   *                 if the write has to be completed asynchronously.
+   * @param count    Number of elements in vec.
+   * @param buf      The IOBuf that manages the buffers referenced by
+   *                 vec, or a pointer to nullptr if the buffers are not
+   *                 associated with an IOBuf.  Note that ownership of
+   *                 the IOBuf is transferred here; upon completion of
+   *                 the write, the AsyncSocket deletes the IOBuf.
+   * @param flags    Set of write flags.
    */
   void writeImpl(WriteCallback* callback, const iovec* vec, size_t count,
                  std::unique_ptr<folly::IOBuf>&& buf,
-                 WriteFlags flags = WriteFlags::NONE,
-                 BufferCallback* bufCallback = nullptr);
+                 WriteFlags flags = WriteFlags::NONE);
 
   /**
    * Attempt to write to the socket.
@@ -735,12 +810,29 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
    *                          will contain the number of bytes written in the
    *                          partially written iovec entry.
    *
-   * @return Returns the total number of bytes written, or -1 on error.  If no
-   *     data can be written immediately, 0 is returned.
+   * @return Returns a WriteResult. See WriteResult for more details.
    */
-  virtual ssize_t performWrite(const iovec* vec, uint32_t count,
-                               WriteFlags flags, uint32_t* countWritten,
-                               uint32_t* partialWritten);
+  virtual WriteResult performWrite(
+      const iovec* vec,
+      uint32_t count,
+      WriteFlags flags,
+      uint32_t* countWritten,
+      uint32_t* partialWritten);
+
+  /**
+   * Sends the message over the socket using sendmsg
+   *
+   * @param msg       Message to send
+   * @param msg_flags Flags to pass to sendmsg
+   */
+  AsyncSocket::WriteResult
+  sendSocketMessage(int fd, struct msghdr* msg, int msg_flags);
+
+  virtual ssize_t tfoSendMsg(int fd, struct msghdr* msg, int msg_flags);
+
+  int socketConnect(const struct sockaddr* addr, socklen_t len);
+
+  void scheduleConnectTimeoutAndRegisterForEvents();
 
   bool updateEventRegistration();
 
@@ -772,7 +864,7 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   void failWrite(const char* fn, const AsyncSocketException& ex);
   void failAllWrites(const AsyncSocketException& ex);
   void invokeConnectErr(const AsyncSocketException& ex);
-  void invokeConnectSuccess();
+  virtual void invokeConnectSuccess();
   void invalidState(ConnectCallback* callback);
   void invalidState(ReadCallback* callback);
   void invalidState(WriteCallback* callback);
@@ -783,11 +875,12 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
   uint8_t shutdownFlags_;               ///< Shutdown state (ShutdownFlags)
   uint16_t eventFlags_;                 ///< EventBase::HandlerFlags settings
   int fd_;                              ///< The socket file descriptor
-  mutable
-    folly::SocketAddress addr_;    ///< The address we tried to connect to
+  mutable folly::SocketAddress addr_;    ///< The address we tried to connect to
+  mutable folly::SocketAddress localAddr_;
+                                        ///< The address we are connecting from
   uint32_t sendTimeout_;                ///< The send timeout, in milliseconds
   uint16_t maxReadsPerEvent_;           ///< Max reads per event loop iteration
-  EventBase* eventBase_;               ///< The EventBase
+  EventBase* eventBase_;                ///< The EventBase
   WriteTimeout writeTimeout_;           ///< A timeout for connect and write
   IoHandler ioHandler_;                 ///< A EventHandler to monitor the fd
   ImmediateReadCB immediateReadHandler_; ///< LoopCallback for checking read
@@ -807,7 +900,17 @@ class AsyncSocket : virtual public AsyncTransportWrapper {
 
   std::chrono::steady_clock::time_point connectStartTime_;
   std::chrono::steady_clock::time_point connectEndTime_;
-};
 
+  std::chrono::milliseconds connectTimeout_{0};
+
+  BufferCallback* bufferCallback_{nullptr};
+  bool tfoEnabled_{false};
+  bool tfoAttempted_{false};
+  bool tfoFinished_{false};
+  bool tfoSucceeded_{false};
+};
+#ifdef _MSC_VER
+#pragma vtordisp(pop)
+#endif
 
 } // folly

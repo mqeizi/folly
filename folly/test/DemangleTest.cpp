@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <folly/Demangle.h>
 
-#include <gflags/gflags.h>
 #include <gtest/gtest.h>
 
 using folly::demangle;
@@ -68,10 +67,4 @@ TEST(Demangle, strlcpy) {
   buf[0] = 'z';
   EXPECT_EQ(strlen(big_string), folly::strlcpy(buf, big_string, 0));
   EXPECT_EQ('z', buf[0]);  // unchanged, size = 0
-}
-
-int main(int argc, char *argv[]) {
-  testing::InitGoogleTest(&argc, argv);
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-  return RUN_ALL_TESTS();
 }

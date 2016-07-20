@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,16 +22,17 @@
 
 #include <folly/FileUtil.h>
 #include <folly/SocketAddress.h>
+#include <folly/String.h>
+#include <folly/detail/SocketFastOpen.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/NotificationQueue.h>
+#include <folly/portability/Fcntl.h>
+#include <folly/portability/Sockets.h>
+#include <folly/portability/Unistd.h>
 
 #include <errno.h>
-#include <fcntl.h>
-#include <netinet/tcp.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 namespace folly {
 
@@ -181,10 +182,15 @@ int AsyncServerSocket::stopAccepting(int shutdownFlags) {
   }
   assert(eventBase_ == nullptr || eventBase_->isInEventBaseThread());
 
-  // When destroy is called, unregister and close the socket immediately
+  // When destroy is called, unregister and close the socket immediately.
   accepting_ = false;
 
-  for (auto& handler : sockets_) {
+  // Close the sockets in reverse order as they were opened to avoid
+  // the condition where another process concurrently tries to open
+  // the same port, succeed to bind the first socket but fails on the
+  // second because it hasn't been closed yet.
+  for (; !sockets_.empty(); sockets_.pop_back()) {
+    auto& handler = sockets_.back();
     handler.unregisterHandler();
     if (shutdownSocketSet_) {
       shutdownSocketSet_->close(handler.socket_);
@@ -195,7 +201,6 @@ int AsyncServerSocket::stopAccepting(int shutdownFlags) {
       closeNoInt(handler.socket_);
     }
   }
-  sockets_.clear();
 
   // Destroy the backoff timout.  This will cancel it if it is running.
   delete backoffTimeout_;
@@ -266,7 +271,7 @@ void AsyncServerSocket::useExistingSockets(const std::vector<int>& fds) {
     SocketAddress address;
     address.setFromLocalAddress(fd);
 
-    setupSocket(fd);
+    setupSocket(fd, address.getFamily());
     sockets_.emplace_back(eventBase_, fd, this, address.getFamily());
     sockets_.back().changeHandlerFD(fd);
   }
@@ -373,7 +378,7 @@ void AsyncServerSocket::bind(uint16_t port) {
     CHECK_GE(s, 0);
 
     try {
-      setupSocket(s);
+      setupSocket(s, res->ai_family);
     } catch (...) {
       closeNoInt(s);
       throw;
@@ -393,8 +398,11 @@ void AsyncServerSocket::bind(uint16_t port) {
     // Bind to the socket
     if (::bind(s, res->ai_addr, res->ai_addrlen) != 0) {
       folly::throwSystemError(
-        errno,
-        "failed to bind to async server socket for port");
+          errno,
+          "failed to bind to async server socket for port ",
+          SocketAddress::getPortFrom(res->ai_addr),
+          " family ",
+          SocketAddress::getFamilyNameFrom(res->ai_addr, "<unknown>"));
     }
   };
 
@@ -413,8 +421,7 @@ void AsyncServerSocket::bind(uint16_t port) {
     }
 
     // If port == 0, then we should try to bind to the same port on ipv4 and
-    // ipv6.  So if we did bind to ipv6, figure out that port and use it,
-    // except for the last attempt when we just use any port available.
+    // ipv6.  So if we did bind to ipv6, figure out that port and use it.
     if (sockets_.size() == 1 && port == 0) {
       SocketAddress address;
       address.setFromLocalAddress(sockets_.back().socket_);
@@ -430,9 +437,10 @@ void AsyncServerSocket::bind(uint16_t port) {
         }
       }
     } catch (const std::system_error& e) {
-      // if we can't bind to the same port on ipv4 as ipv6 when using port=0
-      // then we will try again another 2 times before giving up.  We do this
-      // by closing the sockets that were opened, then redoing the whole thing
+      // If we can't bind to the same port on ipv4 as ipv6 when using
+      // port=0 then we will retry again before giving up after
+      // kNumTries attempts.  We do this by closing the sockets that
+      // were opened, then restarting from scratch.
       if (port == 0 && !sockets_.empty() && tries != kNumTries) {
         for (const auto& socket : sockets_) {
           if (socket.socket_ <= 0) {
@@ -449,6 +457,7 @@ void AsyncServerSocket::bind(uint16_t port) {
         CHECK_EQ(0, getaddrinfo(nullptr, sport, &hints, &res0));
         continue;
       }
+
       throw;
     }
 
@@ -628,7 +637,7 @@ int AsyncServerSocket::createSocket(int family) {
   }
 
   try {
-    setupSocket(fd);
+    setupSocket(fd, family);
   } catch (...) {
     closeNoInt(fd);
     throw;
@@ -636,11 +645,7 @@ int AsyncServerSocket::createSocket(int family) {
   return fd;
 }
 
-void AsyncServerSocket::setupSocket(int fd) {
-  // Get the address family
-  SocketAddress address;
-  address.setFromLocalAddress(fd);
-
+void AsyncServerSocket::setupSocket(int fd, int family) {
   // Put the socket in non-blocking mode
   if (fcntl(fd, F_SETFL, O_NONBLOCK) != 0) {
     folly::throwSystemError(errno,
@@ -660,9 +665,15 @@ void AsyncServerSocket::setupSocket(int fd) {
       setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(int)) != 0) {
     LOG(ERROR) << "failed to set SO_REUSEPORT on async server socket "
                << strerror(errno);
+#ifdef WIN32
+    folly::throwSystemError(errno, "failed to bind to the async server socket");
+#else
+    SocketAddress address;
+    address.setFromLocalAddress(fd);
     folly::throwSystemError(errno,
                             "failed to bind to async server socket: " +
                             address.describe());
+#endif
   }
 
   // Set keepalive as desired
@@ -682,7 +693,6 @@ void AsyncServerSocket::setupSocket(int fd) {
   // Set TCP nodelay if available, MAC OS X Hack
   // See http://lists.danga.com/pipermail/memcached/2005-March/001240.html
 #ifndef TCP_NOPUSH
-  auto family = address.getFamily();
   if (family != AF_UNIX) {
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) != 0) {
       // This isn't a fatal error; just log an error message and continue
@@ -692,13 +702,22 @@ void AsyncServerSocket::setupSocket(int fd) {
   }
 #endif
 
+#if FOLLY_ALLOW_TFO
+  if (tfo_ && detail::tfo_enable(fd, tfoMaxQueueSize_) != 0) {
+    // This isn't a fatal error; just log an error message and continue
+    LOG(WARNING) << "failed to set TCP_FASTOPEN on async server socket: "
+                 << folly::errnoStr(errno);
+  }
+#endif
+
   if (shutdownSocketSet_) {
     shutdownSocketSet_->add(fd);
   }
 }
 
-void AsyncServerSocket::handlerReady(
-  uint16_t events, int fd, sa_family_t addressFamily) noexcept {
+void AsyncServerSocket::handlerReady(uint16_t /* events */,
+                                     int fd,
+                                     sa_family_t addressFamily) noexcept {
   assert(!callbacks_.empty());
   DestructorGuard dg(this);
 

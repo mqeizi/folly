@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Facebook, Inc.
+ * Copyright 2016 Facebook, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,12 +92,4 @@ TEST(rebind_allocator, sanity_check) {
   EXPECT_EQ("HELLO, WORLD", *s);
   s.reset();
   ASSERT_EQ(nullptr, s.get());
-}
-
-int main(int argc, char **argv) {
-  FLAGS_logtostderr = true;
-  google::InitGoogleLogging(argv[0]);
-  testing::InitGoogleTest(&argc, argv);
-
-  return RUN_ALL_TESTS();
 }
